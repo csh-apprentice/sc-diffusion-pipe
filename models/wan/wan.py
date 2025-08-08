@@ -430,12 +430,12 @@ class InitialLayer(nn.Module):
     @torch.autocast('cuda', dtype=AUTOCAST_DTYPE)
     def forward(self, inputs):
         for item in inputs:
-            if torch.is_floating_point(item):
+            if item is not None and torch.is_floating_point(item):
                 item.requires_grad_(True)
 
         x, y, t, text_embeddings_or_ids, seq_lens_or_text_mask, clip_fea = inputs
         bs, channels, f, h, w = x.shape
-        if clip_fea.numel() == 0:
+        if clip_fea is not None and clip_fea.numel() == 0:
             clip_fea = None
 
         if self.text_encoder is not None:
