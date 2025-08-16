@@ -11,6 +11,26 @@ from .attention import flash_attention
 T5_CONTEXT_TOKEN_NUMBER = 512
 FIRST_LAST_FRAME_CONTEXT_TOKEN_NUMBER = 257 * 2
 
+def compute_tau_rel(fps, reference_fps=240.0):
+    """
+    Compute tau_rel = reference_fps / fps for motion blur conditioning.
+    
+    Args:
+        fps (float or torch.Tensor): Target frame rate
+        reference_fps (float): Reference frame rate (default: 240.0)
+    
+    Returns:
+        float or torch.Tensor: tau_rel value for conditioning
+    """
+    if isinstance(fps, torch.Tensor):
+        result = reference_fps / fps.float()
+        print(f'[DEBUG] compute_tau_rel: fps={fps.tolist()}, tau_rel={result.tolist()}')
+        return result
+    else:
+        result = reference_fps / float(fps)
+        print(f'[DEBUG] compute_tau_rel: fps={fps}, tau_rel={result}')
+        return result
+
 
 def sinusoidal_embedding_1d(dim, position):
     # preprocess
@@ -457,6 +477,14 @@ class WanModel(ModelMixin, ConfigMixin):
         self.time_embedding = nn.Sequential(
             nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
         self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))
+        
+        # FPS conditioning encoder
+        self.fps_conditioning = nn.Sequential(
+            nn.Linear(1, 64),
+            nn.SiLU(),
+            nn.LayerNorm(64),
+            nn.Linear(64, dim)
+        )
 
         # blocks
         if model_type in ('i2v', 'flf2v'):

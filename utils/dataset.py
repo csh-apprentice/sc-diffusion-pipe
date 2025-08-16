@@ -97,13 +97,15 @@ def _map_and_cache(dataset, map_fn, cache_dir, cache_file_prefix='', new_fingerp
     new_fingerprint = Hasher.hash(new_fingerprint_args)
     cache_file = cache_dir / f'{cache_file_prefix}{new_fingerprint}.arrow'
     cache_file = str(cache_file)
+    # Keep fps column for latent caching - don't remove all columns
+    columns_to_remove = [col for col in dataset.column_names if col != 'fps']
     dataset = dataset.map(
         map_fn,
         cache_file_name=cache_file,
         load_from_cache_file=(not regenerate_cache),
         writer_batch_size=100,
         new_fingerprint=new_fingerprint,
-        remove_columns=dataset.column_names,
+        remove_columns=columns_to_remove,
         batched=True,
         batch_size=caching_batch_size,
         num_proc=NUM_PROC,
@@ -130,12 +132,18 @@ def _cache_text_embeddings(metadata_dataset, map_fn, i, cache_dir, regenerate_ca
 
     def flatten_captions(example):
         image_spec_out, caption_out, is_video_out = [], [], []
-        for image_spec, captions, is_video in zip(example['image_spec'], example['caption'], example['is_video']):
+        fps_out = []
+        for i, (image_spec, captions, is_video) in enumerate(zip(example['image_spec'], example['caption'], example['is_video'])):
+            fps_value = example['fps'][i] if 'fps' in example and i < len(example['fps']) else None
             for caption in captions:
                 image_spec_out.append(image_spec)
                 caption_out.append(caption)
                 is_video_out.append(is_video)
-        return {'image_spec': image_spec_out, 'caption': caption_out, 'is_video': is_video_out}
+                fps_out.append(fps_value)
+        result = {'image_spec': image_spec_out, 'caption': caption_out, 'is_video': is_video_out}
+        if fps_out:
+            result['fps'] = fps_out
+        return result
 
     flattened_captions = metadata_dataset.map(flatten_captions, batched=True, keep_in_memory=True, remove_columns=metadata_dataset.column_names)
     te_dataset = _map_and_cache(
@@ -497,19 +505,43 @@ class DirectoryDataset:
 
         if regenerate_cache or not metadata_cache_file_1.exists() or not trust_cache:
             print('Intermediate metadata is not cached. Enumerating all files.')
-            files = list(self.path.glob('*'))
+            
+            # Check if we have fps-based folder structure (e.g., 12/clip1.mp4, 24/clip2.mp4)
+            fps_folders = []
+            for item in self.path.iterdir():
+                if item.is_dir() and item.name.isdigit():
+                    fps_folders.append(item)
+            
+            if fps_folders:
+                # FPS-based folder structure detected
+                fps_levels = [int(folder.name) for folder in fps_folders]
+                print(f'[DEBUG] Detected fps-based folder structure with {len(fps_folders)} fps levels: {sorted(fps_levels)}')
+                files = []
+                for fps_folder in fps_folders:
+                    fps_value = int(fps_folder.name)
+                    folder_files = list(fps_folder.glob('*'))
+                    folder_files = [f for f in folder_files if f.is_file()]
+                    print(f'[DEBUG] FPS folder {fps_value}: found {len(folder_files)} files')
+                    for file in folder_files:
+                        if file.is_file():
+                            files.append((file, fps_value))
+            else:
+                # Original flat structure
+                files = [(file, None) for file in self.path.glob('*') if file.is_file()]
+            
             # deterministic order
-            files.sort()
+            files.sort(key=lambda x: str(x[0]))
 
             # Mask can have any extension, it just needs to have the same stem as the image.
             mask_file_stems = {path.stem: path for path in self.mask_path.glob('*') if path.is_file()} if self.mask_path is not None else {}
             control_file_stems = {path.stem: path for path in self.control_path.glob('*') if path.is_file()} if self.control_path is not None else {}
 
-            def process_file(file):
+            def process_file(file_info):
+                file, fps_value = file_info
                 if file.suffix != '.tar':
-                    return [(None, str(file))]
+                    return [(None, str(file), fps_value)]
                 with tarfile.TarFile(file) as tar_f:
-                    return [(str(file), name) for name in tar_f.getnames()]
+                    return [(str(file), name, fps_value) for name in tar_f.getnames()]
 
             captions_json = self.path / CAPTIONS_JSON_FILE
             has_captions_json = captions_json.exists()
@@ -518,16 +550,20 @@ class DirectoryDataset:
             caption_files = []
             mask_files = []
             control_files = []
-            for file in tqdm(files):
+            fps_values = []
+            
+            for file_info in tqdm(files):
+                file, fps_value = file_info
                 if not file.is_file() or file.suffix == '.txt' or file.suffix == '.npz' or file.suffix == '.json' or file.suffix == '.parquet':
                     continue
-                for image_spec in process_file(file):
+                for image_spec in process_file(file_info):
                     image_file = Path(image_spec[1])
                     caption_file = image_file.with_suffix('.txt')
                     if has_captions_json or not os.path.exists(caption_file):
                         caption_file = ''
-                    image_specs.append(image_spec)
+                    image_specs.append((image_spec[0], image_spec[1]))  # Keep original format
                     caption_files.append(str(caption_file))
+                    fps_values.append(image_spec[2])  # Store fps value
                     # mask
                     if image_file.stem in mask_file_stems:
                         mask_files.append(str(mask_file_stems[image_file.stem]))
@@ -544,7 +580,7 @@ class DirectoryDataset:
                         control_files.append(str(control_file_stems[image_file.stem]))
             assert len(image_specs) > 0, f'Directory {self.path} had no images/videos!'
 
-            d = {'image_spec': image_specs, 'caption_file': caption_files, 'mask_file': mask_files}
+            d = {'image_spec': image_specs, 'caption_file': caption_files, 'mask_file': mask_files, 'fps': fps_values}
             if self.control_path:
                 d['control_file'] = control_files
             metadata_dataset = datasets.Dataset.from_dict(d)
@@ -609,6 +645,7 @@ class DirectoryDataset:
             # batch size always 1
             caption_file = example['caption_file'][0]
             image_spec = example['image_spec'][0]
+            fps_value = example['fps'][0] if 'fps' in example else None
             image_file = Path(image_spec[1])
             captions = None
             if 'caption' in example:
@@ -623,7 +660,7 @@ class DirectoryDataset:
             if self.directory_config['shuffle_tags'] and self.shuffle == 0: # backwards compatibility
                 self.shuffle = 1
             captions = shuffle_captions(captions, self.shuffle, self.shuffle_delimiter, self.directory_config['caption_prefix'])
-            empty_return = {'image_spec': [], 'mask_file': [], 'caption': [], 'ar_bucket': [], 'size_bucket': [], 'is_video': []}
+            empty_return = {'image_spec': [], 'mask_file': [], 'caption': [], 'ar_bucket': [], 'size_bucket': [], 'is_video': [], 'fps': []}
             if self.control_path:
                 empty_return['control_file'] = []
 
@@ -689,7 +726,9 @@ class DirectoryDataset:
                 'ar_bucket': [ar_bucket],
                 'size_bucket': [size_bucket],
                 'is_video': [is_video],
+                'fps': [fps_value],
             }
+            print(f'[DEBUG] Dataset __getitem__ fps: {fps_value} for item: {image_spec[1] if isinstance(image_spec, tuple) else image_spec}')
             if self.control_path:
                 ret['control_file'] = [example['control_file'][0]]
             return ret
@@ -876,6 +915,18 @@ class Dataset:
                 ret[key] = torch.stack([example[key] for example in examples])
             else:
                 ret[key] = [example[key] for example in examples]
+        
+        # Debug FPS values in batch
+        print(f'[DEBUG] Batch collation keys: {list(ret.keys())}')
+        if 'fps' in ret:
+            print(f'[DEBUG] Batch has fps key. Values: {ret["fps"]}')
+            fps_values = [fps for fps in ret['fps'] if fps is not None]
+            if fps_values:
+                print(f'[DEBUG] Batch FPS values: {fps_values} (batch_size: {len(ret["fps"])})')
+            else:
+                print(f'[DEBUG] Batch fps key exists but all values are None')
+        else:
+            print(f'[DEBUG] Batch missing fps key!')
         # Only some items in the batch might have valid mask.
         masks = [example['mask'] for example in examples]
         # See if we have any valid masks. If we do, they should all have the same shape.
@@ -949,7 +1000,10 @@ def _cache_fn(datasets, queue, preprocess_media_file_fn, num_text_encoders, rege
 
         if len(tensors_and_masks) == 0:
             assert not is_edit_dataset
-            return {'latents': [], 'mask': [], 'image_spec': [], 'caption': []}
+            empty_result = {'latents': [], 'mask': [], 'image_spec': [], 'caption': []}
+            if 'fps' in example:
+                empty_result['fps'] = example['fps']
+            return empty_result
 
         caching_batch_size = len(example['image_spec'])
         results = defaultdict(list)
@@ -967,6 +1021,9 @@ def _cache_fn(datasets, queue, preprocess_media_file_fn, num_text_encoders, rege
         results['image_spec'] = image_specs
         results['mask'] = [t[1] for t in tensors_and_masks]
         results['caption'] = captions
+        # Preserve fps from input batch
+        if 'fps' in example:
+            results['fps'] = example['fps']
         return results
 
     for ds in datasets:

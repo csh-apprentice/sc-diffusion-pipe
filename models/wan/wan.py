@@ -17,7 +17,7 @@ from .t5 import T5EncoderModel
 from .vae2_1 import Wan2_1_VAE
 from .vae2_2 import Wan2_2_VAE
 from .model import (
-    WanModel, sinusoidal_embedding_1d
+    WanModel, sinusoidal_embedding_1d, compute_tau_rel
 )
 from .clip import CLIPModel
 from . import configs as wan_configs
@@ -47,7 +47,39 @@ class WanModelFromSafetensors(WanModel):
 
         for name, param in model.named_parameters():
             dtype_to_use = torch_dtype if any(keyword in name for keyword in KEEP_IN_HIGH_PRECISION) else transformer_dtype
-            set_module_tensor_to_device(model, name, device='cpu', dtype=dtype_to_use, value=state_dict[name])
+            if name in state_dict:
+                set_module_tensor_to_device(model, name, device='cpu', dtype=dtype_to_use, value=state_dict[name])
+            else:
+                # Initialize new parameters (like fps_conditioning) that don't exist in pretrained model
+                print(f'[DEBUG] Initializing new parameter not in pretrained model: {name}')
+                # Create properly initialized tensor for new parameters
+                if 'fps_conditioning' in name:
+                    if 'fps_conditioning.0.weight' in name:
+                        # First Linear: Kaiming-uniform (fan_in, nonlinearity='relu')
+                        init_value = torch.empty(param.shape, dtype=dtype_to_use)
+                        torch.nn.init.kaiming_uniform_(init_value, mode='fan_in', nonlinearity='relu')
+                    elif 'fps_conditioning.0.bias' in name:
+                        # First Linear: bias = 0
+                        init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                    elif 'fps_conditioning.2.weight' in name:
+                        # LayerNorm: weight = 1
+                        init_value = torch.ones(param.shape, dtype=dtype_to_use)
+                    elif 'fps_conditioning.2.bias' in name:
+                        # LayerNorm: bias = 0
+                        init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                    elif 'fps_conditioning.3.weight' in name:
+                        # Final Linear: weights = 0 (zero-disturbance start)
+                        init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                    elif 'fps_conditioning.3.bias' in name:
+                        # Final Linear: bias = 0
+                        init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                    else:
+                        # Fallback for any other fps_conditioning parameters
+                        init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
+                else:
+                    # Default initialization for other new parameters
+                    init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
+                set_module_tensor_to_device(model, name, device='cpu', dtype=dtype_to_use, value=init_value)
 
         return model
 
@@ -231,7 +263,39 @@ class WanPipeline(BasePipeline):
                         state_dict[key] = f.get_tensor(key)
             for name, param in self.transformer.named_parameters():
                 dtype_to_use = dtype if any(keyword in name for keyword in KEEP_IN_HIGH_PRECISION) else transformer_dtype
-                set_module_tensor_to_device(self.transformer, name, device='cpu', dtype=dtype_to_use, value=state_dict[name])
+                if name in state_dict:
+                    set_module_tensor_to_device(self.transformer, name, device='cpu', dtype=dtype_to_use, value=state_dict[name])
+                else:
+                    # Initialize new parameters (like fps_conditioning) that don't exist in pretrained model
+                    print(f'[DEBUG] Initializing new parameter not in pretrained model: {name}')
+                    # Create properly initialized tensor for new parameters
+                    if 'fps_conditioning' in name:
+                        if 'fps_conditioning.0.weight' in name:
+                            # First Linear: Kaiming-uniform (fan_in, nonlinearity='relu')
+                            init_value = torch.empty(param.shape, dtype=dtype_to_use)
+                            torch.nn.init.kaiming_uniform_(init_value, mode='fan_in', nonlinearity='relu')
+                        elif 'fps_conditioning.0.bias' in name:
+                            # First Linear: bias = 0
+                            init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                        elif 'fps_conditioning.2.weight' in name:
+                            # LayerNorm: weight = 1
+                            init_value = torch.ones(param.shape, dtype=dtype_to_use)
+                        elif 'fps_conditioning.2.bias' in name:
+                            # LayerNorm: bias = 0
+                            init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                        elif 'fps_conditioning.3.weight' in name:
+                            # Final Linear: weights = 0 (zero-disturbance start)
+                            init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                        elif 'fps_conditioning.3.bias' in name:
+                            # Final Linear: bias = 0
+                            init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                        else:
+                            # Fallback for any other fps_conditioning parameters
+                            init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
+                    else:
+                        # Default initialization for other new parameters
+                        init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
+                    set_module_tensor_to_device(self.transformer, name, device='cpu', dtype=dtype_to_use, value=init_value)
 
         self.transformer.train()
         # We'll need the original parameter name for saving, and the name changes once we wrap modules for pipeline parallelism,
@@ -333,6 +397,19 @@ class WanPipeline(BasePipeline):
         y = inputs['y'] if self.model_type in ('i2v', 'flf2v', 'i2v_v2') else None
         # No CLIP for i2v_v2 (Wan2.2)
         clip_context = inputs['clip_context'] if self.model_type in ('i2v', 'flf2v') else None
+        
+        # Handle FPS conditioning
+        fps_values = inputs.get('fps', None)
+        print(f'[DEBUG] prepare_inputs() fps check:')
+        print(f'  - "fps" in inputs: {"fps" in inputs}')
+        print(f'  - fps_values type: {type(fps_values)}')
+        print(f'  - fps_values: {fps_values}')
+        if fps_values is not None:
+            fps_non_none = [fps for fps in fps_values if fps is not None]
+            if fps_non_none:
+                print(f'[DEBUG] prepare_inputs() received FPS values: {fps_non_none}')
+            else:
+                print(f'[DEBUG] prepare_inputs() fps_values is not None but contains no valid fps values')
 
         if self.cache_text_embeddings:
             text_embeddings_or_ids = inputs['text_embeddings']
@@ -368,7 +445,7 @@ class WanPipeline(BasePipeline):
         t = t * 1000
 
         return (
-            (x_t, y, t, text_embeddings_or_ids, seq_lens_or_text_mask, clip_context),
+            (x_t, y, t, text_embeddings_or_ids, seq_lens_or_text_mask, clip_context, fps_values),
             (target, mask),
         )
 
@@ -416,6 +493,7 @@ class InitialLayer(nn.Module):
         self.time_embedding = model.time_embedding
         self.text_embedding = model.text_embedding
         self.time_projection = model.time_projection
+        self.fps_conditioning = model.fps_conditioning
         self.i2v = (model.model_type == 'i2v')
         self.i2v_v2 = (model.model_type == 'i2v_v2')
         self.flf2v = (model.model_type == 'flf2v')
@@ -433,7 +511,7 @@ class InitialLayer(nn.Module):
             if item is not None and torch.is_floating_point(item):
                 item.requires_grad_(True)
 
-        x, y, t, text_embeddings_or_ids, seq_lens_or_text_mask, clip_fea = inputs
+        x, y, t, text_embeddings_or_ids, seq_lens_or_text_mask, clip_fea, fps_values = inputs
         bs, channels, f, h, w = x.shape
         if clip_fea is not None and clip_fea.numel() == 0:
             clip_fea = None
@@ -501,11 +579,27 @@ class InitialLayer(nn.Module):
             context_clip = self.img_emb(clip_fea)  # bs x 257 (x2) x dim
             context = torch.concat([context_clip, context], dim=1)
 
+        # FPS conditioning
+        fps_conditioning = None
+        if fps_values is not None:
+            # Convert fps values to tau_rel and create conditioning embeddings
+            fps_tensor = torch.tensor(fps_values, device=x.device, dtype=torch.float32)
+            tau_rel = compute_tau_rel(fps_tensor).unsqueeze(-1)  # Shape: [batch_size, 1] 
+            print(f'[DEBUG] FPS conditioning debug:')
+            print(f'  - fps_values: {fps_values}')
+            print(f'  - fps_tensor shape: {fps_tensor.shape}')
+            print(f'  - tau_rel shape: {tau_rel.shape}')
+            print(f'  - tau_rel values: {tau_rel.squeeze().tolist()}')
+            
+            fps_conditioning = self.fps_conditioning(tau_rel)  # Shape: [batch_size, dim]
+            print(f'  - fps_conditioning shape: {fps_conditioning.shape}')
+            print(f'  - fps_conditioning mean: {fps_conditioning.mean().item():.4f}')
+
         # pipeline parallelism needs everything on the GPU
         seq_lens = seq_lens.to(x.device)
         grid_sizes = grid_sizes.to(x.device)
 
-        return make_contiguous(x, e, e0, seq_lens, grid_sizes, self.freqs, context)
+        return make_contiguous(x, e, e0, seq_lens, grid_sizes, self.freqs, context, fps_conditioning)
 
 
 class TransformerLayer(nn.Module):
@@ -517,13 +611,13 @@ class TransformerLayer(nn.Module):
 
     @torch.autocast('cuda', dtype=AUTOCAST_DTYPE)
     def forward(self, inputs):
-        x, e, e0, seq_lens, grid_sizes, freqs, context = inputs
+        x, e, e0, seq_lens, grid_sizes, freqs, context, fps_conditioning = inputs
 
         self.offloader.wait_for_block(self.block_idx)
         x = self.block(x, e0, seq_lens, grid_sizes, freqs, context, None)
         self.offloader.submit_move_blocks_forward(self.block_idx)
 
-        return make_contiguous(x, e, e0, seq_lens, grid_sizes, freqs, context)
+        return make_contiguous(x, e, e0, seq_lens, grid_sizes, freqs, context, fps_conditioning)
 
 
 class FinalLayer(nn.Module):
@@ -537,7 +631,7 @@ class FinalLayer(nn.Module):
 
     @torch.autocast('cuda', dtype=AUTOCAST_DTYPE)
     def forward(self, inputs):
-        x, e, e0, seq_lens, grid_sizes, freqs, context = inputs
+        x, e, e0, seq_lens, grid_sizes, freqs, context, fps_conditioning = inputs
         x = self.head(x, e)
         x = self.unpatchify(x, grid_sizes)
         return torch.stack(x, dim=0)
