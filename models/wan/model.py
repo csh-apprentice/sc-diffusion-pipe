@@ -24,11 +24,11 @@ def compute_tau_rel(fps, reference_fps=240.0):
     """
     if isinstance(fps, torch.Tensor):
         result = reference_fps / fps.float()
-        print(f'[DEBUG] compute_tau_rel: fps={fps.tolist()}, tau_rel={result.tolist()}')
+        # print(f'[DEBUG] compute_tau_rel: fps={fps.tolist()}, tau_rel={result.tolist()}')
         return result
     else:
         result = reference_fps / float(fps)
-        print(f'[DEBUG] compute_tau_rel: fps={fps}, tau_rel={result}')
+        # print(f'[DEBUG] compute_tau_rel: fps={fps}, tau_rel={result}')
         return result
 
 
@@ -246,6 +246,104 @@ class WanI2VCrossAttention(WanSelfAttention):
         return x
 
 
+class FPSCrossAttentionAdapter(nn.Module):
+    """
+    Checkpoint-safe FPS conditioning adapter using LoRA projections for disentangled cross-attention.
+    Implements: y = Attn(Q, K_text, V_text) + g * Attn(Q, K', V')
+    
+    IMPORTANT: This version ensures deterministic tensor shapes for gradient checkpointing compatibility.
+    """
+    
+    # Class variable to track one representative adapter for debugging
+    _debug_instance = None
+    _global_call_count = 0
+    _total_adapters_created = 0
+    
+    def __init__(self, dim, num_heads, fps_conditioning_dim, rank=8, gate_init=0.0):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.rank = rank
+        self.fps_conditioning_dim = fps_conditioning_dim
+        
+        # LoRA projections for K' and V' - always executed regardless of FPS values
+        self.k_fps_down = nn.Linear(fps_conditioning_dim, rank, bias=False)
+        self.k_fps_up = nn.Linear(rank, dim, bias=False)
+        self.v_fps_down = nn.Linear(fps_conditioning_dim, rank, bias=False)
+        self.v_fps_up = nn.Linear(rank, dim, bias=False)
+        
+        # Learnable gate - always computed for checkpoint consistency
+        self.gate_alpha = nn.Parameter(torch.tensor(gate_init))
+        
+        # Debug counter (only print every N forward passes)
+        self.debug_counter = 0
+        
+        # Initialize LoRA weights properly
+        self._init_lora_weights()
+        
+        # Count FPS adapter creation
+        FPSCrossAttentionAdapter._total_adapters_created += 1
+        
+        # Set first instance as debug instance
+        if FPSCrossAttentionAdapter._debug_instance is None:
+            FPSCrossAttentionAdapter._debug_instance = self
+        
+    def _init_lora_weights(self):
+        """Initialize LoRA weights: A random, B zeros"""
+        # Down projections (A): random init  
+        nn.init.normal_(self.k_fps_down.weight, std=0.01)
+        nn.init.normal_(self.v_fps_down.weight, std=0.01)
+        
+        # Up projections (B): zeros (ensures initial delta = 0)
+        nn.init.zeros_(self.k_fps_up.weight)
+        nn.init.zeros_(self.v_fps_up.weight)
+    
+    def _count_adapter_parameters(self):
+        """Count parameters in this specific FPS adapter"""
+        total_params = 0
+        param_details = []
+        
+        # Count each LoRA matrix
+        for name, param in self.named_parameters():
+            total_params += param.numel()
+            param_details.append(f"{name}:{param.numel()}")
+            
+        return f"{total_params} total ({', '.join(param_details)})"
+    
+    @classmethod
+    def get_total_adapter_count_and_params(cls):
+        """Get total count and parameters across all FPS adapter instances"""
+        return cls._total_adapters_created
+        
+    def forward(self, q, k_text, v_text, fps_conditioning, context_lens):
+        """
+        Checkpoint-safe forward pass using only deterministic PyTorch operations.
+        Always follows identical computation path regardless of fps_conditioning value.
+        """
+        # ALWAYS compute text cross-attention: Attn(Q, K_text, V_text)
+        y_text = flash_attention(q, k_text, v_text, k_lens=context_lens)
+        
+        # ALWAYS apply LoRA projections (deterministic operations)
+        # fps_conditioning is ALWAYS a valid tensor (never None)
+        k_fps_proj = self.k_fps_up(self.k_fps_down(fps_conditioning))  # [B, dim]
+        v_fps_proj = self.v_fps_up(self.v_fps_down(fps_conditioning))  # [B, dim]
+        
+        # ALWAYS reshape for attention (deterministic shapes)
+        batch_size = q.size(0)
+        k_fps = k_fps_proj.view(batch_size, 1, self.num_heads, self.head_dim)
+        v_fps = v_fps_proj.view(batch_size, 1, self.num_heads, self.head_dim)
+        
+        # ALWAYS compute FPS attention (deterministic operation)
+        y_fps = flash_attention(q, k_fps, v_fps, k_lens=None)
+        
+        # ALWAYS compute gated combination (deterministic operation)
+        gate = torch.sigmoid(self.gate_alpha)
+        y_combined = y_text + gate * y_fps
+        
+        return y_combined
+
+
 WAN_CROSSATTENTION_CLASSES = {
     # T2V and all Wan2.2 cross attn
     'default': WanCrossAttention,
@@ -264,7 +362,8 @@ class WanAttentionBlock(nn.Module):
                  window_size=(-1, -1),
                  qk_norm=True,
                  cross_attn_norm=False,
-                 eps=1e-6):
+                 eps=1e-6,
+                 fps_adapter_config=None):
         super().__init__()
         self.dim = dim
         self.ffn_dim = ffn_dim
@@ -273,6 +372,7 @@ class WanAttentionBlock(nn.Module):
         self.qk_norm = qk_norm
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
+        self.fps_adapter_config = fps_adapter_config
 
         # layers
         self.norm1 = WanLayerNorm(dim, eps)
@@ -286,6 +386,19 @@ class WanAttentionBlock(nn.Module):
                                                                       (-1, -1),
                                                                       qk_norm,
                                                                       eps)
+        
+        # FPS adapter (only for selected blocks)
+        if fps_adapter_config is not None:
+            self.fps_adapter = FPSCrossAttentionAdapter(
+                dim=dim,
+                num_heads=num_heads,
+                fps_conditioning_dim=fps_adapter_config['fps_conditioning_dim'],
+                rank=fps_adapter_config['rank'],
+                gate_init=fps_adapter_config['gate_init']
+            )
+        else:
+            self.fps_adapter = None
+            
         self.norm2 = WanLayerNorm(dim, eps)
         self.ffn = nn.Sequential(
             nn.Linear(dim, ffn_dim), nn.GELU(approximate='tanh'),
@@ -303,6 +416,7 @@ class WanAttentionBlock(nn.Module):
         freqs,
         context,
         context_lens,
+        fps_conditioning=None,
     ):
         r"""
         Args:
@@ -321,13 +435,33 @@ class WanAttentionBlock(nn.Module):
         x = x + y * e[2].squeeze(2)
 
         # cross-attention & ffn function
-        def cross_attn_ffn(x, context, context_lens, e):
-            x = x + self.cross_attn(self.norm3(x), context, context_lens)
+        def cross_attn_ffn(x, context, context_lens, e, fps_conditioning):
+            if self.fps_adapter is not None:
+                # Use FPS-enhanced cross-attention (fps_conditioning is ALWAYS valid)
+                normed_x = self.norm3(x)
+                b, n, d = normed_x.size(0), self.num_heads, self.dim // self.num_heads
+                
+                # Compute Q, K_text, V_text for standard cross-attention
+                q = self.cross_attn.norm_q(self.cross_attn.q(normed_x)).view(b, -1, n, d)
+                k_text = self.cross_attn.norm_k(self.cross_attn.k(context)).view(b, -1, n, d)
+                v_text = self.cross_attn.v(context).view(b, -1, n, d)
+                
+                # Apply FPS adapter for combined attention
+                attn_out = self.fps_adapter(q, k_text, v_text, fps_conditioning, context_lens)
+                
+                # Apply output projection
+                attn_out = attn_out.flatten(2)
+                attn_out = self.cross_attn.o(attn_out)
+                x = x + attn_out
+            else:
+                # Standard cross-attention without FPS conditioning
+                x = x + self.cross_attn(self.norm3(x), context, context_lens)
+                
             y = self.ffn(self.norm2(x) * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
             x = x + y * e[5].squeeze(2)
             return x
 
-        x = cross_attn_ffn(x, context, context_lens, e)
+        x = cross_attn_ffn(x, context, context_lens, e, fps_conditioning)
         return x
 
 
@@ -410,7 +544,10 @@ class WanModel(ModelMixin, ConfigMixin):
                  window_size=(-1, -1),
                  qk_norm=True,
                  cross_attn_norm=True,
-                 eps=1e-6):
+                 eps=1e-6,
+                 fps_adapter_rank=8,
+                 fps_adapter_gate_init=0.0,
+                 fps_condition_blocks="deepest_third"):
         r"""
         Initialize the diffusion model backbone.
 
@@ -491,11 +628,56 @@ class WanModel(ModelMixin, ConfigMixin):
             cross_attn_type = 'wan2_1_i2v_cross_attn'
         else:
             cross_attn_type = 'default'
+            
+        # determine which blocks get fps adapter (deepest third)
+        if isinstance(fps_condition_blocks, str) and fps_condition_blocks == "deepest_third":
+            fps_blocks_count = num_layers // 3
+            fps_block_indices = set(range(num_layers - fps_blocks_count, num_layers))
+        elif isinstance(fps_condition_blocks, int):
+            fps_blocks_count = min(fps_condition_blocks, num_layers)
+            fps_block_indices = set(range(num_layers - fps_blocks_count, num_layers))
+        else:
+            fps_block_indices = set()
+            
+        # fps conditioning MLP has output dim = model dim
+        fps_conditioning_dim = dim
+        
         self.blocks = nn.ModuleList([
-            WanAttentionBlock(cross_attn_type, dim, ffn_dim, num_heads,
-                              window_size, qk_norm, cross_attn_norm, eps)
-            for _ in range(num_layers)
+            WanAttentionBlock(
+                cross_attn_type, dim, ffn_dim, num_heads,
+                window_size, qk_norm, cross_attn_norm, eps,
+                fps_adapter_config={
+                    'fps_conditioning_dim': fps_conditioning_dim,
+                    'rank': fps_adapter_rank,
+                    'gate_init': fps_adapter_gate_init
+                } if i in fps_block_indices else None
+            )
+            for i in range(num_layers)
         ])
+        
+        # DIRECT FPS ADAPTER PARAMETER COUNT - BRUTE FORCE METHOD
+        print(f"\n[DIRECT_FPS_COUNT] Manually counting FPS adapter parameters...")
+        total_fps_adapter_params = 0
+        fps_adapter_details = []
+        
+        for i, block in enumerate(self.blocks):
+            if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
+                block_params = 0
+                block_detail = []
+                for name, param in block.fps_adapter.named_parameters():
+                    param_count = param.numel()
+                    block_params += param_count
+                    block_detail.append(f"{name}:{param_count}")
+                
+                total_fps_adapter_params += block_params
+                fps_adapter_details.append(f"Block {i}: {block_params} params ({', '.join(block_detail)})")
+                
+        print(f"[DIRECT_FPS_COUNT] FOUND {total_fps_adapter_params:,} FPS ADAPTER PARAMETERS!")
+        print(f"[DIRECT_FPS_COUNT] Details:")
+        for detail in fps_adapter_details[:3]:  # Show first 3
+            print(f"  {detail}")
+        if len(fps_adapter_details) > 3:
+            print(f"  ... and {len(fps_adapter_details)-3} more blocks with FPS adapters")
 
         # head
         self.head = Head(dim, out_dim, patch_size, eps)

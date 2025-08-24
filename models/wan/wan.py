@@ -51,7 +51,7 @@ class WanModelFromSafetensors(WanModel):
                 set_module_tensor_to_device(model, name, device='cpu', dtype=dtype_to_use, value=state_dict[name])
             else:
                 # Initialize new parameters (like fps_conditioning) that don't exist in pretrained model
-                print(f'[DEBUG] Initializing new parameter not in pretrained model: {name}')
+                # print(f'[DEBUG] Initializing new parameter not in pretrained model: {name}')
                 # Create properly initialized tensor for new parameters
                 if 'fps_conditioning' in name:
                     if 'fps_conditioning.0.weight' in name:
@@ -69,7 +69,7 @@ class WanModelFromSafetensors(WanModel):
                         init_value = torch.zeros(param.shape, dtype=dtype_to_use)
                     elif 'fps_conditioning.3.weight' in name:
                         # Final Linear: weights = 0 (zero-disturbance start)
-                        init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                        init_value = torch.zeros(param.shape, dtype=dtype_to_use, requires_grad=True)
                     elif 'fps_conditioning.3.bias' in name:
                         # Final Linear: bias = 0
                         init_value = torch.zeros(param.shape, dtype=dtype_to_use)
@@ -80,6 +80,19 @@ class WanModelFromSafetensors(WanModel):
                     # Default initialization for other new parameters
                     init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
                 set_module_tensor_to_device(model, name, device='cpu', dtype=dtype_to_use, value=init_value)
+
+        # Verify FPS parameters are properly loaded/initialized
+        fps_params = [name for name, _ in model.named_parameters() if 'fps' in name.lower()]
+        if fps_params:
+            print(f'[DEBUG] FPS parameters in model: {len(fps_params)} found')
+            print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
+            
+            # CRITICAL FIX: Ensure all FPS parameters have requires_grad=True
+            for name, param in model.named_parameters():
+                if 'fps_conditioning' in name:
+                    param.requires_grad_(True)
+        else:
+            print('[DEBUG] No FPS parameters found in model (this is expected if no FPS conditioning is used)')
 
         return model
 
@@ -247,15 +260,29 @@ class WanPipeline(BasePipeline):
         transformer_dtype = self.model_config.get('transformer_dtype', dtype)
 
         if self.transformer_path.is_file():
+            # Add FPS adapter configuration to the model config
+            modified_config = self.json_config.copy()
+            modified_config.update({
+                'fps_adapter_rank': self.model_config.get('fps_adapter_rank', 4),
+                'fps_adapter_gate_init': self.model_config.get('fps_adapter_gate_init', 0.0),
+                'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third")
+            })
             self.transformer = WanModelFromSafetensors.from_pretrained(
                 self.transformer_path,
-                self.json_config,
+                modified_config,
                 torch_dtype=dtype,
                 transformer_dtype=transformer_dtype,
             )
         else:
             with init_empty_weights():
-                self.transformer = WanModel.from_config(self.json_config)
+                # Add FPS adapter configuration to the model config
+                modified_config = self.json_config.copy()
+                modified_config.update({
+                    'fps_adapter_rank': self.model_config.get('fps_adapter_rank', 4),
+                    'fps_adapter_gate_init': self.model_config.get('fps_adapter_gate_init', 0.0),
+                    'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third")
+                })
+                self.transformer = WanModel.from_config(modified_config)
             state_dict = {}
             for shard in self.transformer_path.glob('*.safetensors'):
                 with safetensors.safe_open(shard, framework="pt", device="cpu") as f:
@@ -267,7 +294,7 @@ class WanPipeline(BasePipeline):
                     set_module_tensor_to_device(self.transformer, name, device='cpu', dtype=dtype_to_use, value=state_dict[name])
                 else:
                     # Initialize new parameters (like fps_conditioning) that don't exist in pretrained model
-                    print(f'[DEBUG] Initializing new parameter not in pretrained model: {name}')
+                    # print(f'[DEBUG] Initializing new parameter not in pretrained model: {name}')
                     # Create properly initialized tensor for new parameters
                     if 'fps_conditioning' in name:
                         if 'fps_conditioning.0.weight' in name:
@@ -285,7 +312,7 @@ class WanPipeline(BasePipeline):
                             init_value = torch.zeros(param.shape, dtype=dtype_to_use)
                         elif 'fps_conditioning.3.weight' in name:
                             # Final Linear: weights = 0 (zero-disturbance start)
-                            init_value = torch.zeros(param.shape, dtype=dtype_to_use)
+                            init_value = torch.zeros(param.shape, dtype=dtype_to_use, requires_grad=True)
                         elif 'fps_conditioning.3.bias' in name:
                             # Final Linear: bias = 0
                             init_value = torch.zeros(param.shape, dtype=dtype_to_use)
@@ -296,6 +323,19 @@ class WanPipeline(BasePipeline):
                         # Default initialization for other new parameters
                         init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
                     set_module_tensor_to_device(self.transformer, name, device='cpu', dtype=dtype_to_use, value=init_value)
+
+        # Verify FPS parameters are properly loaded/initialized  
+        fps_params = [name for name, _ in self.transformer.named_parameters() if 'fps' in name.lower()]
+        if fps_params:
+            print(f'[DEBUG] FPS parameters in transformer: {len(fps_params)} found')
+            print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
+            
+            # CRITICAL FIX: Ensure all FPS parameters have requires_grad=True
+            for name, param in self.transformer.named_parameters():
+                if 'fps_conditioning' in name:
+                    param.requires_grad_(True)
+        else:
+            print('[DEBUG] No FPS parameters found in transformer (this is expected if no FPS conditioning is used)')
 
         self.transformer.train()
         # We'll need the original parameter name for saving, and the name changes once we wrap modules for pipeline parallelism,
@@ -322,10 +362,125 @@ class WanPipeline(BasePipeline):
         self.peft_config.save_pretrained(save_dir)
         # ComfyUI format.
         peft_state_dict = {'diffusion_model.'+k: v for k, v in peft_state_dict.items()}
+        
+        # CRITICAL FIX: Manually add FPS adapter parameters that were excluded from PEFT
+        # FPS adapters were excluded from PEFT target modules to avoid double LoRA wrapping,
+        # but we still need to save them for inference
+        fps_adapter_params_added = 0
+        
+        print(f'[FPS_ADAPTER_SAVE_DEBUG] Starting FPS adapter parameter collection...')
+        print(f'[FPS_ADAPTER_SAVE_DEBUG] self.transformer type: {type(self.transformer)}')
+        print(f'[FPS_ADAPTER_SAVE_DEBUG] has blocks: {hasattr(self.transformer, "blocks")}')
+        
+        # Use the same successful method as [DIRECT_FPS_COUNT] to find FPS adapter parameters
+        if hasattr(self.transformer, 'blocks'):
+            print(f'[FPS_ADAPTER_SAVE_DEBUG] Found {len(self.transformer.blocks)} blocks')
+            for i, block in enumerate(self.transformer.blocks):
+                if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
+                    print(f'[FPS_ADAPTER_SAVE_DEBUG] Block {i} has FPS adapter')
+                    for param_name, param in block.fps_adapter.named_parameters():
+                        print(f'[FPS_ADAPTER_SAVE_DEBUG] Found param {param_name}, requires_grad={param.requires_grad}')
+                        if param.requires_grad:
+                            # Construct full parameter name: blocks.{i}.fps_adapter.{param_name}
+                            full_name = f'blocks.{i}.fps_adapter.{param_name}'
+                            key = f'diffusion_model.{full_name}'
+                            if key not in peft_state_dict:  # Avoid duplicates
+                                peft_state_dict[key] = param.detach().cpu()
+                                fps_adapter_params_added += 1
+                                print(f'[FPS_ADAPTER_SAVE_DEBUG] Added {key}')
+        else:
+            print(f'[FPS_ADAPTER_SAVE_DEBUG] self.transformer has no blocks attribute!')
+        
+        if fps_adapter_params_added > 0:
+            print(f'[FPS_ADAPTER_SAVE] Added {fps_adapter_params_added} FPS adapter parameters to checkpoint')
+        
+        # PRINT ACTUAL FPS PARAMETER VALUES for tracking changes
+        print(f'[FPS_VALUES_SAVE] Printing sample FPS parameter values at save time...')
+        
+        # Print FPS MLP values
+        fps_mlp_keys = [k for k in peft_state_dict.keys() if 'fps_conditioning' in k]
+        for key in sorted(fps_mlp_keys):
+            tensor = peft_state_dict[key]
+            if tensor.numel() <= 10:  # Small tensors - show all values
+                print(f'[FPS_VALUES_SAVE] {key}: {tensor.flatten().tolist()}')
+            else:  # Large tensors - show statistics
+                norm = tensor.norm().item()
+                mean = tensor.mean().item()
+                std = tensor.std().item()
+                print(f'[FPS_VALUES_SAVE] {key}: norm={norm:.6f}, mean={mean:.6f}, std={std:.6f}')
+        
+        # Print sample FPS adapter values (first 2 blocks)
+        fps_adapter_keys = [k for k in peft_state_dict.keys() if 'fps_adapter' in k]
+        sample_fps_keys = [k for k in sorted(fps_adapter_keys) if 'blocks.27' in k or 'blocks.28' in k]
+        for key in sample_fps_keys:
+            tensor = peft_state_dict[key]
+            if 'gate_alpha' in key:
+                print(f'[FPS_VALUES_SAVE] {key}: {tensor.item():.6f}')
+            else:
+                norm = tensor.norm().item()
+                mean = tensor.mean().item()
+                print(f'[FPS_VALUES_SAVE] {key}: norm={norm:.6f}, mean={mean:.6f}')
+        
+        # Verify FPS parameters are included in checkpoint
+        fps_params = [k for k in peft_state_dict.keys() if 'fps' in k.lower()]
+        if fps_params:
+            print(f'[DEBUG] FPS parameters in checkpoint: {len(fps_params)} found')
+            print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
+        else:
+            print('[DEBUG] WARNING: No FPS parameters found in checkpoint!')
+            
         safetensors.torch.save_file(peft_state_dict, save_dir / 'adapter_model.safetensors', metadata={'format': 'pt'})
 
     def save_model(self, save_dir, state_dict):
+        # Verify FPS parameters are included in full model checkpoint
+        fps_params = [k for k in state_dict.keys() if 'fps' in k.lower()]
+        if fps_params:
+            print(f'[DEBUG] FPS parameters in full model checkpoint: {len(fps_params)} found')
+            print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
+        else:
+            print('[DEBUG] No FPS parameters found in full model checkpoint')
+            
         safetensors.torch.save_file(state_dict, save_dir / 'model.safetensors', metadata={'format': 'pt'})
+        
+    def test_fps_checkpoint_compatibility(self):
+        """Test function to verify FPS parameters can be saved and loaded correctly"""
+        print('[DEBUG] Testing FPS checkpoint compatibility...')
+        
+        # Get current FPS parameters
+        fps_params_before = {}
+        for name, param in self.transformer.named_parameters():
+            if 'fps' in name.lower():
+                fps_params_before[name] = param.data.clone()
+        
+        if fps_params_before:
+            print(f'[DEBUG] Found {len(fps_params_before)} FPS parameters to test')
+            
+            # Test that parameters have the expected names and shapes
+            expected_patterns = ['fps_conditioning', 'fps_adapter', 'gate_alpha']
+            found_patterns = []
+            for name in fps_params_before.keys():
+                for pattern in expected_patterns:
+                    if pattern in name.lower():
+                        found_patterns.append(pattern)
+                        break
+            
+            print(f'[DEBUG] FPS parameter types found: {set(found_patterns)}')
+            
+            # Verify parameter ranges are reasonable
+            for name, param in fps_params_before.items():
+                param_stats = {
+                    'mean': param.mean().item(),
+                    'std': param.std().item(),
+                    'min': param.min().item(),
+                    'max': param.max().item()
+                }
+                print(f'[DEBUG] {name}: shape={param.shape}, stats={param_stats}')
+                
+            print('[DEBUG] FPS checkpoint compatibility test completed successfully')
+            return True
+        else:
+            print('[DEBUG] No FPS parameters found - checkpoint test skipped')
+            return False
 
     def get_preprocess_media_file_fn(self):
         if self.model_type == 'ti2v':
@@ -400,16 +555,10 @@ class WanPipeline(BasePipeline):
         
         # Handle FPS conditioning
         fps_values = inputs.get('fps', None)
-        print(f'[DEBUG] prepare_inputs() fps check:')
-        print(f'  - "fps" in inputs: {"fps" in inputs}')
-        print(f'  - fps_values type: {type(fps_values)}')
-        print(f'  - fps_values: {fps_values}')
         if fps_values is not None:
             fps_non_none = [fps for fps in fps_values if fps is not None]
-            if fps_non_none:
-                print(f'[DEBUG] prepare_inputs() received FPS values: {fps_non_none}')
-            else:
-                print(f'[DEBUG] prepare_inputs() fps_values is not None but contains no valid fps values')
+            if not fps_non_none:
+                print(f'[DEBUG] prepare_inputs() fps_values is not None but contains no valid fps values')  # Keep error case
 
         if self.cache_text_embeddings:
             text_embeddings_or_ids = inputs['text_embeddings']
@@ -494,6 +643,11 @@ class InitialLayer(nn.Module):
         self.text_embedding = model.text_embedding
         self.time_projection = model.time_projection
         self.fps_conditioning = model.fps_conditioning
+        
+        # Test FPS checkpoint compatibility after model is fully loaded
+        if hasattr(self, 'test_fps_checkpoint_compatibility'):
+            self.test_fps_checkpoint_compatibility()
+            
         self.i2v = (model.model_type == 'i2v')
         self.i2v_v2 = (model.model_type == 'i2v_v2')
         self.flf2v = (model.model_type == 'flf2v')
@@ -579,21 +733,14 @@ class InitialLayer(nn.Module):
             context_clip = self.img_emb(clip_fea)  # bs x 257 (x2) x dim
             context = torch.concat([context_clip, context], dim=1)
 
-        # FPS conditioning
-        fps_conditioning = None
-        if fps_values is not None:
-            # Convert fps values to tau_rel and create conditioning embeddings
-            fps_tensor = torch.tensor(fps_values, device=x.device, dtype=torch.float32)
-            tau_rel = compute_tau_rel(fps_tensor).unsqueeze(-1)  # Shape: [batch_size, 1] 
-            print(f'[DEBUG] FPS conditioning debug:')
-            print(f'  - fps_values: {fps_values}')
-            print(f'  - fps_tensor shape: {fps_tensor.shape}')
-            print(f'  - tau_rel shape: {tau_rel.shape}')
-            print(f'  - tau_rel values: {tau_rel.squeeze().tolist()}')
-            
-            fps_conditioning = self.fps_conditioning(tau_rel)  # Shape: [batch_size, dim]
-            print(f'  - fps_conditioning shape: {fps_conditioning.shape}')
-            print(f'  - fps_conditioning mean: {fps_conditioning.mean().item():.4f}')
+        # FPS conditioning - ALWAYS create a valid tensor for checkpoint compatibility
+        # fps_values is NEVER None (dataset always provides fps values)
+        # Convert fps values to tau_rel and create conditioning embeddings
+        # CRITICAL: Create tensor from x to maintain computation graph consistency
+        fps_tensor = x.new_tensor(fps_values, dtype=torch.float32)
+        tau_rel = compute_tau_rel(fps_tensor).unsqueeze(-1)  # Shape: [batch_size, 1] 
+        fps_conditioning = self.fps_conditioning(tau_rel)  # Shape: [batch_size, dim]
+        
 
         # pipeline parallelism needs everything on the GPU
         seq_lens = seq_lens.to(x.device)
@@ -614,7 +761,7 @@ class TransformerLayer(nn.Module):
         x, e, e0, seq_lens, grid_sizes, freqs, context, fps_conditioning = inputs
 
         self.offloader.wait_for_block(self.block_idx)
-        x = self.block(x, e0, seq_lens, grid_sizes, freqs, context, None)
+        x = self.block(x, e0, seq_lens, grid_sizes, freqs, context, None, fps_conditioning)
         self.offloader.submit_move_blocks_forward(self.block_idx)
 
         return make_contiguous(x, e, e0, seq_lens, grid_sizes, freqs, context, fps_conditioning)

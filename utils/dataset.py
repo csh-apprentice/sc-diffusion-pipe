@@ -728,7 +728,7 @@ class DirectoryDataset:
                 'is_video': [is_video],
                 'fps': [fps_value],
             }
-            print(f'[DEBUG] Dataset __getitem__ fps: {fps_value} for item: {image_spec[1] if isinstance(image_spec, tuple) else image_spec}')
+            # print(f'[DEBUG] Dataset __getitem__ fps: {fps_value} for item: {image_spec[1] if isinstance(image_spec, tuple) else image_spec}')
             if self.control_path:
                 ret['control_file'] = [example['control_file'][0]]
             return ret
@@ -917,16 +917,17 @@ class Dataset:
                 ret[key] = [example[key] for example in examples]
         
         # Debug FPS values in batch
-        print(f'[DEBUG] Batch collation keys: {list(ret.keys())}')
+        # print(f'[DEBUG] Batch collation keys: {list(ret.keys())}')
         if 'fps' in ret:
-            print(f'[DEBUG] Batch has fps key. Values: {ret["fps"]}')
-            fps_values = [fps for fps in ret['fps'] if fps is not None]
-            if fps_values:
-                print(f'[DEBUG] Batch FPS values: {fps_values} (batch_size: {len(ret["fps"])})')
-            else:
-                print(f'[DEBUG] Batch fps key exists but all values are None')
+            # print(f'[DEBUG] Batch has fps key. Values: {ret["fps"]}')
+            # fps_values = [fps for fps in ret['fps'] if fps is not None]
+            # if fps_values:
+            #     print(f'[DEBUG] Batch FPS values: {fps_values} (batch_size: {len(ret["fps"])})')
+            # else:
+            #     print(f'[DEBUG] Batch fps key exists but all values are None')
+            pass
         else:
-            print(f'[DEBUG] Batch missing fps key!')
+            print(f'[DEBUG] Batch missing fps key!')  # Keep this as it indicates an error
         # Only some items in the batch might have valid mask.
         masks = [example['mask'] for example in examples]
         # See if we have any valid masks. If we do, they should all have the same shape.

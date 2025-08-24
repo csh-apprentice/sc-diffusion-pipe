@@ -168,6 +168,9 @@ class BasePipeline:
                 continue
             for full_submodule_name, submodule in module.named_modules(prefix=name):
                 if isinstance(submodule, nn.Linear):
+                    # Skip FPS adapter modules to avoid double LoRA wrapping
+                    if 'fps_adapter' in full_submodule_name:
+                        continue
                     target_linear_modules.add(full_submodule_name)
         target_linear_modules = list(target_linear_modules)
 
@@ -185,7 +188,9 @@ class BasePipeline:
         self.peft_config = peft_config
         self.lora_model = peft.get_peft_model(self.transformer, peft_config)
         if is_main_process():
+            # Original PEFT parameter count
             self.lora_model.print_trainable_parameters()
+            
         for name, p in self.transformer.named_parameters():
             p.original_name = name
             if p.requires_grad:
@@ -205,14 +210,29 @@ class BasePipeline:
         adapter_state_dict = safetensors.torch.load_file(safetensors_files[0])
         modified_state_dict = {}
         model_parameters = set(name for name, p in self.transformer.named_parameters())
+        fps_adapter_params_loaded = 0
+        
         for k, v in adapter_state_dict.items():
             # Replace Diffusers or ComfyUI prefix
+            k_original = k
             k = re.sub(r'^(transformer|diffusion_model)\.', '', k)
-            # Replace weight at end for LoRA format
-            k = re.sub(r'\.weight$', '.default.weight', k)
-            if k not in model_parameters:
-                raise RuntimeError(f'modified_state_dict key {k} is not in the model parameters')
-            modified_state_dict[k] = v
+            
+            # Special handling for FPS adapter parameters (no .default suffix needed)
+            if 'fps_adapter' in k:
+                if k in model_parameters:
+                    modified_state_dict[k] = v
+                    fps_adapter_params_loaded += 1
+                else:
+                    print(f'[FPS_ADAPTER_LOAD] Warning: FPS adapter parameter {k} not found in model')
+            else:
+                # Standard LoRA parameter handling
+                k = re.sub(r'\.weight$', '.default.weight', k)
+                if k not in model_parameters:
+                    raise RuntimeError(f'modified_state_dict key {k} is not in the model parameters')
+                modified_state_dict[k] = v
+        
+        if fps_adapter_params_loaded > 0:
+            print(f'[FPS_ADAPTER_LOAD] Successfully loaded {fps_adapter_params_loaded} FPS adapter parameters')
         self.transformer.load_state_dict(modified_state_dict, strict=False)
 
     def load_and_fuse_adapter(self, path):

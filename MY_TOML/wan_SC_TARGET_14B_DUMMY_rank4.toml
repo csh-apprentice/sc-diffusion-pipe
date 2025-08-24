@@ -70,7 +70,7 @@ dtype = 'bfloat16'
 timestep_sample_method = 'logit_normal'
 
 # FPS conditioning adapter settings
-fps_adapter_rank = 8                              # LoRA rank r
+fps_adapter_rank = 4                              # LoRA rank r
 fps_adapter_gate_init = 0.0                       # gate α init  
 fps_condition_blocks = "deepest_third"            # or explicit number (eg: 10 means the deepest 10 blocks)
 

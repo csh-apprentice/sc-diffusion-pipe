@@ -238,7 +238,11 @@ def clip_grad_norm_(parameters, max_norm, norm_type=2, mpu=None):
     tmp_tensor = torch.tensor([1.0], device=clip_coef.device)
     clip_coef = torch.min(tmp_tensor, clip_coef)
     for p in parameters:
-        p.grad.data.mul_(clip_coef)
+        # Handle scalar gradients (e.g., gate_alpha) by using scalar clip_coef
+        if p.grad.data.dim() == 0:
+            p.grad.data.mul_(clip_coef.squeeze())
+        else:
+            p.grad.data.mul_(clip_coef)
     return total_norm
 
 

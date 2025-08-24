@@ -529,6 +529,22 @@ if __name__ == '__main__':
         loss_fn=model.get_loss_fn(),
         **additional_pipeline_module_kwargs
     )
+    
+    # CRITICAL FIX: Enable FPS parameter gradients BEFORE optimizer creation
+    # This ensures FPS parameters are included in optimizer's parameter groups
+    fps_mlp_params_fixed = 0
+    fps_adapter_params_fixed = 0
+    for name, param in pipeline_model.named_parameters():
+        if 'fps_conditioning' in name:
+            param.requires_grad_(True)
+            fps_mlp_params_fixed += 1
+        elif 'fps_adapter' in name:
+            param.requires_grad_(True)
+            fps_adapter_params_fixed += 1
+    
+    if fps_mlp_params_fixed > 0 or fps_adapter_params_fixed > 0:
+        print(f'[PRE_OPTIMIZER_FPS_FIX] Enabled gradients for {fps_mlp_params_fixed} FPS MLP + {fps_adapter_params_fixed} FPS adapter parameters BEFORE optimizer creation')
+    
     parameters_to_train = [p for p in pipeline_model.parameters() if p.requires_grad]
 
     if config['compile']:
@@ -674,6 +690,7 @@ if __name__ == '__main__':
         config=ds_config,
     )
     model.model_engine = model_engine
+    
     if model_engine.is_pipe_parallel:
          grid = model_engine.grid
          model_engine.first_last_stage_group = dist.new_group(ranks=[grid.pp_group[0], grid.pp_group[-1]])
@@ -756,6 +773,7 @@ if __name__ == '__main__':
         loss = model_engine.train_batch(iterator).item()
         epoch_loss += loss
         num_steps += 1
+        
         train_dataloader.sync_epoch()
 
         new_epoch, checkpointed, saved = saver.process_epoch(epoch, step)
