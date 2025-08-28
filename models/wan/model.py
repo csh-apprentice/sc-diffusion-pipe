@@ -298,19 +298,21 @@ class FPSCrossAttentionAdapter(nn.Module):
     _global_call_count = 0
     _total_adapters_created = 0
     
-    def __init__(self, dim, num_heads, fps_conditioning_dim, rank=8, gate_init=0.0):
+    def __init__(self, dim, num_heads, fps_conditioning_dim, rank=8, gate_init=0.0, num_tokens=1):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.rank = rank
         self.fps_conditioning_dim = fps_conditioning_dim
+        self.num_tokens = num_tokens  # Number of FPS conditioning tokens per head
         
         # LoRA projections for K' and V' - always executed regardless of FPS values
+        # Output dimension is num_tokens * dim to support multiple conditioning tokens
         self.k_fps_down = nn.Linear(fps_conditioning_dim, rank, bias=False)
-        self.k_fps_up = nn.Linear(rank, dim, bias=False)
+        self.k_fps_up = nn.Linear(rank, num_tokens * dim, bias=False)
         self.v_fps_down = nn.Linear(fps_conditioning_dim, rank, bias=False)
-        self.v_fps_up = nn.Linear(rank, dim, bias=False)
+        self.v_fps_up = nn.Linear(rank, num_tokens * dim, bias=False)
         
         # Learnable gate - always computed for checkpoint consistency
         self.gate_alpha = nn.Parameter(torch.tensor(gate_init))
@@ -365,13 +367,13 @@ class FPSCrossAttentionAdapter(nn.Module):
         
         # ALWAYS apply LoRA projections (deterministic operations)
         # fps_conditioning is ALWAYS a valid tensor (never None)
-        k_fps_proj = self.k_fps_up(self.k_fps_down(fps_conditioning))  # [B, dim]
-        v_fps_proj = self.v_fps_up(self.v_fps_down(fps_conditioning))  # [B, dim]
+        k_fps_proj = self.k_fps_up(self.k_fps_down(fps_conditioning))  # [B, num_tokens * dim]
+        v_fps_proj = self.v_fps_up(self.v_fps_down(fps_conditioning))  # [B, num_tokens * dim]
         
         # ALWAYS reshape for attention (deterministic shapes)
         batch_size = q.size(0)
-        k_fps = k_fps_proj.view(batch_size, 1, self.num_heads, self.head_dim)
-        v_fps = v_fps_proj.view(batch_size, 1, self.num_heads, self.head_dim)
+        k_fps = k_fps_proj.view(batch_size, self.num_tokens, self.num_heads, self.head_dim)
+        v_fps = v_fps_proj.view(batch_size, self.num_tokens, self.num_heads, self.head_dim)
         
         # ALWAYS compute FPS attention (deterministic operation)
         y_fps = flash_attention(q, k_fps, v_fps, k_lens=None)
@@ -433,7 +435,8 @@ class WanAttentionBlock(nn.Module):
                 num_heads=num_heads,
                 fps_conditioning_dim=fps_adapter_config['fps_conditioning_dim'],
                 rank=fps_adapter_config['rank'],
-                gate_init=fps_adapter_config['gate_init']
+                gate_init=fps_adapter_config['gate_init'],
+                num_tokens=fps_adapter_config.get('num_tokens', 1)  # Default to 1 for backward compatibility
             )
         else:
             self.fps_adapter = None
@@ -587,6 +590,7 @@ class WanModel(ModelMixin, ConfigMixin):
                  fps_adapter_rank=8,
                  fps_adapter_gate_init=0.0,
                  fps_condition_blocks="deepest_third",
+                 fps_adapter_num_tokens=1,
                  fps_tau_transform="log1p",
                  fps_tau_scale=0.33333334):
         r"""
@@ -694,7 +698,8 @@ class WanModel(ModelMixin, ConfigMixin):
                 fps_adapter_config={
                     'fps_conditioning_dim': fps_conditioning_dim,
                     'rank': fps_adapter_rank,
-                    'gate_init': fps_adapter_gate_init
+                    'gate_init': fps_adapter_gate_init,
+                    'num_tokens': fps_adapter_num_tokens
                 } if i in fps_block_indices else None
             )
             for i in range(num_layers)

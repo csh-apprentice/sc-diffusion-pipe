@@ -266,6 +266,7 @@ class WanPipeline(BasePipeline):
                 'fps_adapter_rank': self.model_config.get('fps_adapter_rank', 4),
                 'fps_adapter_gate_init': self.model_config.get('fps_adapter_gate_init', 0.0),
                 'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third"),
+                'fps_adapter_num_tokens': self.model_config.get('fps_adapter_num_tokens', 1),
                 'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
                 'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334)
             })
@@ -283,6 +284,7 @@ class WanPipeline(BasePipeline):
                     'fps_adapter_rank': self.model_config.get('fps_adapter_rank', 4),
                     'fps_adapter_gate_init': self.model_config.get('fps_adapter_gate_init', 0.0),
                     'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third"),
+                    'fps_adapter_num_tokens': self.model_config.get('fps_adapter_num_tokens', 1),
                     'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
                     'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334)
                 })
