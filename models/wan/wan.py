@@ -268,7 +268,8 @@ class WanPipeline(BasePipeline):
                 'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third"),
                 'fps_adapter_num_tokens': self.model_config.get('fps_adapter_num_tokens', 1),
                 'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
-                'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334)
+                'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
+                'fps_embed_dim': self.model_config.get('fps_embed_dim', 256)
             })
             self.transformer = WanModelFromSafetensors.from_pretrained(
                 self.transformer_path,
@@ -286,7 +287,8 @@ class WanPipeline(BasePipeline):
                     'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third"),
                     'fps_adapter_num_tokens': self.model_config.get('fps_adapter_num_tokens', 1),
                     'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
-                    'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334)
+                    'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
+                    'fps_embed_dim': self.model_config.get('fps_embed_dim', 256)
                 })
                 self.transformer = WanModel.from_config(modified_config)
             state_dict = {}

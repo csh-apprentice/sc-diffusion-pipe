@@ -592,7 +592,8 @@ class WanModel(ModelMixin, ConfigMixin):
                  fps_condition_blocks="deepest_third",
                  fps_adapter_num_tokens=1,
                  fps_tau_transform="log1p",
-                 fps_tau_scale=0.33333334):
+                 fps_tau_scale=0.33333334,
+                 fps_embed_dim=256):
         r"""
         Initialize the diffusion model backbone.
 
@@ -669,7 +670,7 @@ class WanModel(ModelMixin, ConfigMixin):
             nn.Linear(1, 64),
             nn.SiLU(),
             nn.LayerNorm(64),
-            nn.Linear(64, dim)
+            nn.Linear(64, fps_embed_dim)
         )
 
         # blocks
@@ -688,8 +689,8 @@ class WanModel(ModelMixin, ConfigMixin):
         else:
             fps_block_indices = set()
             
-        # fps conditioning MLP has output dim = model dim
-        fps_conditioning_dim = dim
+        # fps conditioning MLP has configurable output dim (fps_embed_dim)
+        fps_conditioning_dim = fps_embed_dim
         
         self.blocks = nn.ModuleList([
             WanAttentionBlock(
