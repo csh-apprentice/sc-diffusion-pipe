@@ -71,4 +71,10 @@ You should:
 
 Note, if we do save the checkpoints includes the injected params, we can test it using the checkpoints saved in we under checkpoints/20250821_17-46-33 folder for epoch 1.
 
+# Task 5: Seperate the injectio from base lora
+In order to better test how powerful our injection is, I want to make it possible that we can only train on fps adapter and fps condition mlp and don't do any update on the Wan2.1 base model (equal to rank=0). You should:
+1. First check if our current pipeline allows this, either remove the [adapter] in out toml file or set rank=0, does any of these methods works?
+2. If not, fix our code logic, if we don't provide the [adapter] block in the TOML file, the training is not doing base lora finetuning, note this would also not saving base lora checkpoint.
+3. After wrapping up, check our inference code, do we need to modify the script to support this case?
+Note: All the changes of the code should be a extension, which means you shouldn't disable the training pipeline from including the base lora training.
 

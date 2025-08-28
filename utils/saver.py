@@ -108,8 +108,28 @@ class Saver:
             os.makedirs(tmp_dir, exist_ok=False)
         dist.barrier()
         if dp_id == 0:
-            # With BF16_Optimizer, we get pickle errors unless we do p.detach(). I have no idea why.
-            partial_state_dict = {p.original_name: p.detach() for p in self.pipeline_model.parameters() if hasattr(p, 'original_name')}
+            # Check if this is FPS-only training (no adapter but has FPS parameters)
+            fps_only_mode = not self.is_adapter
+            trainable_fps_params = 0
+            total_fps_params = 0
+            
+            if fps_only_mode:
+                # In FPS-only mode, only save trainable parameters to avoid saving 14B frozen params
+                partial_state_dict = {}
+                for p in self.pipeline_model.parameters():
+                    if hasattr(p, 'original_name'):
+                        if 'fps' in p.original_name.lower():
+                            total_fps_params += 1
+                        if p.requires_grad:
+                            if 'fps' in p.original_name.lower():
+                                trainable_fps_params += 1
+                            partial_state_dict[p.original_name] = p.detach()
+                print(f'[FPS_ONLY_SAVE] Saving only {len(partial_state_dict)} trainable parameters ({trainable_fps_params}/{total_fps_params} FPS params)')
+            else:
+                # Standard full model saving
+                # With BF16_Optimizer, we get pickle errors unless we do p.detach(). I have no idea why.
+                partial_state_dict = {p.original_name: p.detach() for p in self.pipeline_model.parameters() if hasattr(p, 'original_name')}
+                
             if 'save_dtype' in self.config:
                 convert_state_dict_dtype(partial_state_dict, self.config['save_dtype'])
             torch.save(partial_state_dict, tmp_dir / f'state_dict_{stage_id}.bin')

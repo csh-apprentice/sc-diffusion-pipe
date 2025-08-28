@@ -217,13 +217,21 @@ class BasePipeline:
             k_original = k
             k = re.sub(r'^(transformer|diffusion_model)\.', '', k)
             
-            # Special handling for FPS adapter parameters (no .default suffix needed)
+            # Special handling for FPS parameters (no .default suffix needed)
             if 'fps_adapter' in k:
                 if k in model_parameters:
                     modified_state_dict[k] = v
                     fps_adapter_params_loaded += 1
                 else:
                     print(f'[FPS_ADAPTER_LOAD] Warning: FPS adapter parameter {k} not found in model')
+            elif 'fps_conditioning' in k:
+                # Handle FPS MLP parameters - they don't need .default suffix either
+                if k in model_parameters:
+                    modified_state_dict[k] = v
+                    fps_adapter_params_loaded += 1  # Count as FPS param
+                    print(f'[FPS_MLP_LOAD] Loading FPS MLP parameter: {k}')
+                else:
+                    print(f'[FPS_MLP_LOAD] Warning: FPS MLP parameter {k} not found in model')
             else:
                 # Standard LoRA parameter handling
                 k = re.sub(r'\.weight$', '.default.weight', k)
@@ -232,7 +240,7 @@ class BasePipeline:
                 modified_state_dict[k] = v
         
         if fps_adapter_params_loaded > 0:
-            print(f'[FPS_ADAPTER_LOAD] Successfully loaded {fps_adapter_params_loaded} FPS adapter parameters')
+            print(f'[FPS_LOAD] Successfully loaded {fps_adapter_params_loaded} FPS parameters (adapters + MLP)')
         self.transformer.load_state_dict(modified_state_dict, strict=False)
 
     def load_and_fuse_adapter(self, path):

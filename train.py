@@ -453,6 +453,18 @@ if __name__ == '__main__':
             model.load_adapter_weights(init_from_existing)
     else:
         is_adapter = False
+        # MEMORY FIX: For FPS-only training, freeze all base model parameters 
+        # to match PEFT's memory efficiency behavior
+        if is_main_process():
+            print("[FPS_ONLY_TRAINING] Freezing base model parameters to save memory...")
+        base_params_frozen = 0
+        for name, param in model.transformer.named_parameters():
+            # Only freeze base model parameters, keep FPS parameters trainable
+            if 'fps_conditioning' not in name and 'fps_adapter' not in name:
+                param.requires_grad_(False)
+                base_params_frozen += 1
+        if is_main_process():
+            print(f"[FPS_ONLY_TRAINING] Frozen {base_params_frozen} base model parameters")
 
     # if this is a new run, create a new dir for it
     if not resume_from_checkpoint and is_main_process():

@@ -265,7 +265,9 @@ class WanPipeline(BasePipeline):
             modified_config.update({
                 'fps_adapter_rank': self.model_config.get('fps_adapter_rank', 4),
                 'fps_adapter_gate_init': self.model_config.get('fps_adapter_gate_init', 0.0),
-                'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third")
+                'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third"),
+                'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
+                'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334)
             })
             self.transformer = WanModelFromSafetensors.from_pretrained(
                 self.transformer_path,
@@ -280,7 +282,9 @@ class WanPipeline(BasePipeline):
                 modified_config.update({
                     'fps_adapter_rank': self.model_config.get('fps_adapter_rank', 4),
                     'fps_adapter_gate_init': self.model_config.get('fps_adapter_gate_init', 0.0),
-                    'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third")
+                    'fps_condition_blocks': self.model_config.get('fps_condition_blocks', "deepest_third"),
+                    'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
+                    'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334)
                 })
                 self.transformer = WanModel.from_config(modified_config)
             state_dict = {}
@@ -644,6 +648,10 @@ class InitialLayer(nn.Module):
         self.time_projection = model.time_projection
         self.fps_conditioning = model.fps_conditioning
         
+        # FPS conditioning configuration
+        self.fps_tau_transform = model.fps_tau_transform
+        self.fps_tau_scale = model.fps_tau_scale
+        
         # Test FPS checkpoint compatibility after model is fully loaded
         if hasattr(self, 'test_fps_checkpoint_compatibility'):
             self.test_fps_checkpoint_compatibility()
@@ -738,7 +746,7 @@ class InitialLayer(nn.Module):
         # Convert fps values to tau_rel and create conditioning embeddings
         # CRITICAL: Create tensor from x to maintain computation graph consistency
         fps_tensor = x.new_tensor(fps_values, dtype=torch.float32)
-        tau_rel = compute_tau_rel(fps_tensor).unsqueeze(-1)  # Shape: [batch_size, 1] 
+        tau_rel = compute_tau_rel(fps_tensor, transform=self.fps_tau_transform, scale=self.fps_tau_scale).unsqueeze(-1)  # Shape: [batch_size, 1] 
         fps_conditioning = self.fps_conditioning(tau_rel)  # Shape: [batch_size, dim]
         
 

@@ -11,25 +11,64 @@ from .attention import flash_attention
 T5_CONTEXT_TOKEN_NUMBER = 512
 FIRST_LAST_FRAME_CONTEXT_TOKEN_NUMBER = 257 * 2
 
-def compute_tau_rel(fps, reference_fps=240.0):
+from typing import Optional, Union
+
+Number = Union[float, int]
+TensorOrNumber = Union[torch.Tensor, Number]
+
+def compute_tau_rel(
+    fps: TensorOrNumber,
+    *,
+    # If you don't want a reference, pass reference_fps=None (uses tau = 1/fps)
+    reference_fps: Optional[Number] = 240.0,
+    # Transform to apply to tau (exposure proxy)
+    transform: str = "log1p",          # options: "raw" | "log" | "log1p" | "neglogfps"
+    # Multiplicative scaling (kept as a multiplier, as you prefer)
+    scale: float = 0.33333334,         # ≈ 1/3 → keeps log1p(240/fps) ~ [0, ~3] → [0, ~1]
+    # Numerical stability
+    eps: float = 1e-6,
+) -> TensorOrNumber:
     """
-    Compute tau_rel = reference_fps / fps for motion blur conditioning.
-    
-    Args:
-        fps (float or torch.Tensor): Target frame rate
-        reference_fps (float): Reference frame rate (default: 240.0)
-    
-    Returns:
-        float or torch.Tensor: tau_rel value for conditioning
+    Compute a scalar for fps-conditioning.
+
+    tau_raw = (reference_fps / fps) if reference_fps is not None else (1 / fps)
+
+    transform:
+      - "raw":      tau_raw
+      - "log":      log(tau_raw + eps)
+      - "log1p":    log1p(tau_raw)              # recommended
+      - "neglogfps": -log(fps + eps)            # equivalent to log(1/fps) up to a constant
+
+    Returns same type as input (torch.Tensor or float/int).
     """
-    if isinstance(fps, torch.Tensor):
-        result = reference_fps / fps.float()
-        # print(f'[DEBUG] compute_tau_rel: fps={fps.tolist()}, tau_rel={result.tolist()}')
-        return result
+    is_tensor = isinstance(fps, torch.Tensor)
+    x = fps.to(torch.float32) if is_tensor else torch.tensor(float(fps), dtype=torch.float32)
+
+    # exposure proxy tau
+    if reference_fps is None:
+        tau = 1.0 / (x + eps)
     else:
-        result = reference_fps / float(fps)
-        # print(f'[DEBUG] compute_tau_rel: fps={fps}, tau_rel={result}')
-        return result
+        tau = float(reference_fps) / (x + eps)
+
+    # transform
+    if transform == "raw":
+        y = tau
+    elif transform == "log":
+        y = torch.log(tau + eps)
+    elif transform == "log1p":
+        y = torch.log1p(tau)          # smooth & stable for our τ ∈ {1,2,4,6,10,20}
+    elif transform == "neglogfps":
+        y = -torch.log(x + eps)       # similar behavior; no reference needed
+    else:
+        raise ValueError(f"Unknown transform: {transform}")
+
+    # multiplicative scaling (your preference)
+    if scale is not None:
+        y = y * float(scale)
+
+    if is_tensor:
+        return y
+    return float(y.item())
 
 
 def sinusoidal_embedding_1d(dim, position):
@@ -547,7 +586,9 @@ class WanModel(ModelMixin, ConfigMixin):
                  eps=1e-6,
                  fps_adapter_rank=8,
                  fps_adapter_gate_init=0.0,
-                 fps_condition_blocks="deepest_third"):
+                 fps_condition_blocks="deepest_third",
+                 fps_tau_transform="log1p",
+                 fps_tau_scale=0.33333334):
         r"""
         Initialize the diffusion model backbone.
 
@@ -603,6 +644,10 @@ class WanModel(ModelMixin, ConfigMixin):
         self.qk_norm = qk_norm
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
+        
+        # FPS conditioning configuration
+        self.fps_tau_transform = fps_tau_transform
+        self.fps_tau_scale = fps_tau_scale
 
         # embeddings
         self.patch_embedding = nn.Conv3d(
