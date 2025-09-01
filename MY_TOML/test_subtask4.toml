@@ -1,0 +1,49 @@
+# Test configuration for SubTask 4 verification
+output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
+train_name = 'TEST_SUBTASK4'
+
+dataset = '/root/workspace/sc-diffusion-pipe/MY_TOML/dataset_SC_TARGET_DUMMY.toml'
+
+# Very short test run
+epochs = 1
+micro_batch_size_per_gpu = 1
+pipeline_stages = 1
+gradient_accumulation_steps = 1
+gradient_clipping = 1.0
+warmup_steps = 2
+
+# Minimal eval/save
+eval_every_n_epochs = 1000  # Skip eval
+save_every_n_epochs = 1000  # Skip save
+save_every_n_steps = 1000   # Skip save
+checkpoint_every_n_minutes = 1000  # Skip checkpoint
+
+activation_checkpointing = true
+partition_method = 'parameters'
+save_dtype = 'bfloat16'
+caching_batch_size = 1
+steps_per_print = 1
+video_clip_mode = 'single_middle'
+
+[model]
+type = 'wan'
+ckpt_path = '/root/workspace/diffusion-pipe/cindy_ckpts/Wan2.1-T2V-14B'
+dtype = 'bfloat16'
+timestep_sample_method = 'logit_normal'
+
+# FPS conditioning configuration - testing SubTask 4
+fps_adapter_rank = 32                              # Higher rank for testing
+fps_adapter_gate_init = 0.0                        
+fps_condition_blocks = "deepest_third"             
+fps_adapter_num_tokens = 4                         # SubTask 2: Test with 4 tokens per head
+fps_tau_transform = "log1p"                        # SubTask 1: configurable transform
+fps_tau_scale = 0.33333334                         # SubTask 1: configurable scale
+fps_embed_dim = 256                                # SubTask 3: configurable fps embedding dimension
+fps_condition_hidden = 64                          # NEW SubTask 4: configurable FPS conditioning hidden dimension
+
+[optimizer]
+type = 'adamw_optimi'
+lr = 2e-05
+betas = [0.9, 0.99]
+weight_decay = 0.01
+eps = 1e-8

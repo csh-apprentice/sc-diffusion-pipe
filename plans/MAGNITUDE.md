@@ -121,6 +121,10 @@ fps_adapter_gate_init also impacts on how fast our model learns, given our slow 
 
 In FPSCrossAttentionAdapter.__init__, add lora_alpha (configurable, default 16/32) and precompute self.lora_scale = lora_alpha / rank. In forward, multiply k_fps_proj and v_fps_proj by self.lora_scale.
 
+## SubTask 7: Remove the Layernorm in FPS condition
+ did some simple tests with our FPS MLP and noticed that using a LayerNorm right after the first linear layer weakens the fps signal at initialization. Specifically, because we initialize the bias of that linear layer to zero, normalization wipes out the proportional differences (e.g. fps=12 vs fps=60), leaving only directional variations. The SiLU nonlinearity recovers some distinction, but the signal still comes through weaker.
+For consistency, I’d propose removing LayerNorm here. The time embedding MLP in Wan2.1 — which performs the very similar task of turning a scalar timestep into a high-dimensional embedding — follows the simpler Linear → SiLU → Linear design, and this would align our fps conditioning path with that proven structure.
+
 
 ## Optional
 

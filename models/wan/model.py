@@ -3,6 +3,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 
@@ -285,6 +286,73 @@ class WanI2VCrossAttention(WanSelfAttention):
         return x
 
 
+class FpsConditioning(nn.Module):
+    """
+    FPS conditioning module with special initialization for zero-disturbance training.
+    """
+    def __init__(self, out_dim: int, hidden: int = 64):
+        super().__init__()
+        
+        # Layers: Linear(1, hidden) -> SiLU -> LayerNorm(hidden) -> Linear(hidden, out_dim)
+        self.lin1 = nn.Linear(1, hidden)
+        self.act = nn.SiLU()
+        self.ln = nn.LayerNorm(hidden)
+        self.lin2 = nn.Linear(hidden, out_dim)
+        
+        # Note: Don't call _init_weights() here - tensors are on meta device
+        # Custom initialization will be applied after materialization
+    
+    def _init_weights(self):
+        """Special initialization for zero-disturbance training using PyTorch init functions."""
+        # lin1: Kaiming uniform initialization (fan_in, ReLU-like)
+        nn.init.kaiming_uniform_(self.lin1.weight, a=0.0, mode='fan_in', nonlinearity='relu')
+        nn.init.zeros_(self.lin1.bias)
+        
+        # LayerNorm: standard initialization  
+        nn.init.ones_(self.ln.weight)
+        nn.init.zeros_(self.ln.bias)
+        
+        # lin2: Zero initialization for zero-disturbance head (like LoRA B matrices)
+        nn.init.zeros_(self.lin2.weight)
+        nn.init.zeros_(self.lin2.bias)
+        
+        # Debug: Print initialization values to verify zero-disturbance setup
+        # Only print if tensors are not meta tensors (avoid .item() on meta tensors)
+        if not self.lin1.weight.is_meta:
+            print(f"[DEBUG SubTask4] FpsConditioning initialization verification:")
+            print(f"  - lin1.weight: mean={self.lin1.weight.mean().item():.6f}, std={self.lin1.weight.std().item():.6f}")
+            print(f"  - lin1.bias: all_zero={torch.all(self.lin1.bias == 0).item()}")
+            print(f"  - ln.weight: all_ones={torch.all(self.ln.weight == 1).item()}")
+            print(f"  - ln.bias: all_zero={torch.all(self.ln.bias == 0).item()}")
+            print(f"  - lin2.weight: all_zero={torch.all(self.lin2.weight == 0).item()}")
+            print(f"  - lin2.bias: all_zero={torch.all(self.lin2.bias == 0).item()}")
+    
+    def forward(self, x):
+        """Forward pass: lin1 -> SiLU -> LayerNorm -> lin2"""
+        # DEBUG: Print FPS conditioning values during training
+        if not hasattr(self, '_forward_call_count'):
+            self._forward_call_count = 0
+        
+        self._forward_call_count += 1
+        
+        # Print every 10th call to avoid spam, but show first few calls
+        # Only debug if weights are real tensors (not meta tensors)
+        if (self._forward_call_count <= 3 or self._forward_call_count % 10 == 0) and not self.lin2.weight.is_meta:
+            output = self.lin2(self.ln(self.act(self.lin1(x))))
+            
+            print(f"[DEBUG SubTask4] FpsConditioning forward #{self._forward_call_count}:")
+            print(f"  - Input FPS: {x.flatten()[:5].tolist()} (first 5 values)")
+            print(f"  - Output range: [{output.min().item():.6f}, {output.max().item():.6f}]")
+            print(f"  - Output mean_abs: {output.abs().mean().item():.6f}")
+            print(f"  - lin2.weight max_abs: {self.lin2.weight.abs().max().item():.6f}")
+            print(f"  - lin2.bias max_abs: {self.lin2.bias.abs().max().item():.6f}")
+            
+            return output
+        else:
+            # Normal forward pass without debug
+            return self.lin2(self.ln(self.act(self.lin1(x))))
+
+
 class FPSCrossAttentionAdapter(nn.Module):
     """
     Checkpoint-safe FPS conditioning adapter using LoRA projections for disentangled cross-attention.
@@ -362,6 +430,15 @@ class FPSCrossAttentionAdapter(nn.Module):
         Checkpoint-safe forward pass using only deterministic PyTorch operations.
         Always follows identical computation path regardless of fps_conditioning value.
         """
+        # DEBUG: Print FPS adapter configuration (only once per training)
+        if not hasattr(self, '_debug_printed'):
+            print(f"[DEBUG SubTask4] FPS Adapter Configuration:")
+            print(f"  - num_tokens: {self.num_tokens}")
+            print(f"  - rank: {self.rank}")
+            print(f"  - fps_conditioning_dim: {self.fps_conditioning_dim}")
+            print(f"  - dim: {self.dim}")
+            self._debug_printed = True
+        
         # ALWAYS compute text cross-attention: Attn(Q, K_text, V_text)
         y_text = flash_attention(q, k_text, v_text, k_lens=context_lens)
         
@@ -369,6 +446,12 @@ class FPSCrossAttentionAdapter(nn.Module):
         # fps_conditioning is ALWAYS a valid tensor (never None)
         k_fps_proj = self.k_fps_up(self.k_fps_down(fps_conditioning))  # [B, num_tokens * dim]
         v_fps_proj = self.v_fps_up(self.v_fps_down(fps_conditioning))  # [B, num_tokens * dim]
+        
+        # DEBUG: Print tensor shapes during first forward pass
+        if not hasattr(self, '_shape_debug_printed'):
+            print(f"[DEBUG SubTask4] FpsConditioning tensor input: {fps_conditioning.shape}")
+            print(f"  - Expected fps_conditioning_dim: {self.fps_conditioning_dim}")
+            self._shape_debug_printed = True
         
         # ALWAYS reshape for attention (deterministic shapes)
         batch_size = q.size(0)
@@ -593,7 +676,8 @@ class WanModel(ModelMixin, ConfigMixin):
                  fps_adapter_num_tokens=1,
                  fps_tau_transform="log1p",
                  fps_tau_scale=0.33333334,
-                 fps_embed_dim=256):
+                 fps_embed_dim=256,
+                 fps_condition_hidden=64):
         r"""
         Initialize the diffusion model backbone.
 
@@ -665,13 +749,17 @@ class WanModel(ModelMixin, ConfigMixin):
             nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
         self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))
         
-        # FPS conditioning encoder
-        self.fps_conditioning = nn.Sequential(
-            nn.Linear(1, 64),
-            nn.SiLU(),
-            nn.LayerNorm(64),
-            nn.Linear(64, fps_embed_dim)
-        )
+        # FPS conditioning encoder with special initialization
+        print(f"[DEBUG SubTask4] Creating FpsConditioning: out_dim={fps_embed_dim}, hidden={fps_condition_hidden}")
+        self.fps_conditioning = FpsConditioning(out_dim=fps_embed_dim, hidden=fps_condition_hidden)
+        
+        # DEBUG: Check FpsConditioning weights immediately after creation
+        if not self.fps_conditioning.lin2.weight.is_meta:
+            print(f"[DEBUG SubTask4] FpsConditioning weights AFTER creation:")
+            print(f"  - lin2.weight all_zero: {torch.all(self.fps_conditioning.lin2.weight == 0).item()}")
+            print(f"  - lin2.bias all_zero: {torch.all(self.fps_conditioning.lin2.bias == 0).item()}")
+        else:
+            print(f"[DEBUG SubTask4] FpsConditioning weights AFTER creation: (meta tensors - skipping check)")
 
         # blocks
         if model_type in ('i2v', 'flf2v'):
@@ -781,9 +869,12 @@ class WanModel(ModelMixin, ConfigMixin):
         Initialize model parameters using Xavier initialization.
         """
 
-        # basic init
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
+        # basic init - skip FpsConditioning modules and their children (they handle their own initialization)
+        for name, m in self.named_modules():
+            if isinstance(m, FpsConditioning):
+                continue
+            # Skip Linear modules that are children of FpsConditioning
+            if isinstance(m, nn.Linear) and 'fps_conditioning' not in name:
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)

@@ -54,38 +54,26 @@ class WanModelFromSafetensors(WanModel):
                 # print(f'[DEBUG] Initializing new parameter not in pretrained model: {name}')
                 # Create properly initialized tensor for new parameters
                 if 'fps_conditioning' in name:
-                    if 'fps_conditioning.0.weight' in name:
-                        # First Linear: Kaiming-uniform (fan_in, nonlinearity='relu')
-                        init_value = torch.empty(param.shape, dtype=dtype_to_use)
-                        torch.nn.init.kaiming_uniform_(init_value, mode='fan_in', nonlinearity='relu')
-                    elif 'fps_conditioning.0.bias' in name:
-                        # First Linear: bias = 0
-                        init_value = torch.zeros(param.shape, dtype=dtype_to_use)
-                    elif 'fps_conditioning.2.weight' in name:
-                        # LayerNorm: weight = 1
-                        init_value = torch.ones(param.shape, dtype=dtype_to_use)
-                    elif 'fps_conditioning.2.bias' in name:
-                        # LayerNorm: bias = 0
-                        init_value = torch.zeros(param.shape, dtype=dtype_to_use)
-                    elif 'fps_conditioning.3.weight' in name:
-                        # Final Linear: weights = 0 (zero-disturbance start)
-                        init_value = torch.zeros(param.shape, dtype=dtype_to_use, requires_grad=True)
-                    elif 'fps_conditioning.3.bias' in name:
-                        # Final Linear: bias = 0
-                        init_value = torch.zeros(param.shape, dtype=dtype_to_use)
-                    else:
-                        # Fallback for any other fps_conditioning parameters
-                        init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
+                    # FpsConditioning handles its own initialization, don't override it
+                    continue
                 else:
                     # Default initialization for other new parameters
                     init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
-                set_module_tensor_to_device(model, name, device='cpu', dtype=dtype_to_use, value=init_value)
+                    set_module_tensor_to_device(model, name, device='cpu', dtype=dtype_to_use, value=init_value)
 
         # Verify FPS parameters are properly loaded/initialized
         fps_params = [name for name, _ in model.named_parameters() if 'fps' in name.lower()]
         if fps_params:
             print(f'[DEBUG] FPS parameters in model: {len(fps_params)} found')
             print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
+            
+            # DEBUG: Check fps_conditioning parameters after checkpoint loading
+            for name, param in model.named_parameters():
+                if 'fps_conditioning.lin2' in name and not param.is_meta:
+                    if 'weight' in name:
+                        print(f'[DEBUG] After checkpoint loading - {name}: max_abs={param.abs().max().item():.6f}, all_zero={torch.all(param == 0).item()}')
+                    elif 'bias' in name:
+                        print(f'[DEBUG] After checkpoint loading - {name}: max_abs={param.abs().max().item():.6f}, all_zero={torch.all(param == 0).item()}')
             
             # CRITICAL FIX: Ensure all FPS parameters have requires_grad=True
             for name, param in model.named_parameters():
@@ -269,7 +257,8 @@ class WanPipeline(BasePipeline):
                 'fps_adapter_num_tokens': self.model_config.get('fps_adapter_num_tokens', 1),
                 'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
                 'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
-                'fps_embed_dim': self.model_config.get('fps_embed_dim', 256)
+                'fps_embed_dim': self.model_config.get('fps_embed_dim', 256),
+                'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64)
             })
             self.transformer = WanModelFromSafetensors.from_pretrained(
                 self.transformer_path,
@@ -288,7 +277,8 @@ class WanPipeline(BasePipeline):
                     'fps_adapter_num_tokens': self.model_config.get('fps_adapter_num_tokens', 1),
                     'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
                     'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
-                    'fps_embed_dim': self.model_config.get('fps_embed_dim', 256)
+                    'fps_embed_dim': self.model_config.get('fps_embed_dim', 256),
+                    'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64)
                 })
                 self.transformer = WanModel.from_config(modified_config)
             state_dict = {}

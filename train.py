@@ -703,6 +703,18 @@ if __name__ == '__main__':
     )
     model.model_engine = model_engine
     
+    # --- Re-apply FpsConditioning init AFTER DeepSpeed materializes parameters ---
+    if hasattr(model, "transformer") and hasattr(model.transformer, "fps_conditioning"):
+        print("[FPS_INIT_FIX] Re-initializing FpsConditioning after DeepSpeed.initialize()")
+        model.transformer.fps_conditioning._init_weights()
+
+        # Debug check
+        w = model.transformer.fps_conditioning.lin2.weight
+        b = model.transformer.fps_conditioning.lin2.bias
+        print("[FPS_INIT_FIX] lin2.weight all_zero:", torch.all(w == 0).item())
+        print("[FPS_INIT_FIX] lin2.bias all_zero:", torch.all(b == 0).item())
+
+    
     if model_engine.is_pipe_parallel:
          grid = model_engine.grid
          model_engine.first_last_stage_group = dist.new_group(ranks=[grid.pp_group[0], grid.pp_group[-1]])
