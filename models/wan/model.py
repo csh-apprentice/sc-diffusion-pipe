@@ -289,14 +289,15 @@ class WanI2VCrossAttention(WanSelfAttention):
 class FpsConditioning(nn.Module):
     """
     FPS conditioning module with special initialization for zero-disturbance training.
+    SubTask 7: Simplified design matching Wan2.1 time embedding (Linear -> SiLU -> Linear).
     """
     def __init__(self, out_dim: int, hidden: int = 64):
         super().__init__()
         
-        # Layers: Linear(1, hidden) -> SiLU -> LayerNorm(hidden) -> Linear(hidden, out_dim)
+        # Layers: Linear(1, hidden) -> SiLU -> Linear(hidden, out_dim)
+        # Removed LayerNorm to prevent weakening of FPS signal at initialization
         self.lin1 = nn.Linear(1, hidden)
         self.act = nn.SiLU()
-        self.ln = nn.LayerNorm(hidden)
         self.lin2 = nn.Linear(hidden, out_dim)
         
         # Note: Don't call _init_weights() here - tensors are on meta device
@@ -308,49 +309,14 @@ class FpsConditioning(nn.Module):
         nn.init.kaiming_uniform_(self.lin1.weight, a=0.0, mode='fan_in', nonlinearity='relu')
         nn.init.zeros_(self.lin1.bias)
         
-        # LayerNorm: standard initialization  
-        nn.init.ones_(self.ln.weight)
-        nn.init.zeros_(self.ln.bias)
-        
         # lin2: Zero initialization for zero-disturbance head (like LoRA B matrices)
         nn.init.zeros_(self.lin2.weight)
         nn.init.zeros_(self.lin2.bias)
         
-        # Debug: Print initialization values to verify zero-disturbance setup
-        # Only print if tensors are not meta tensors (avoid .item() on meta tensors)
-        if not self.lin1.weight.is_meta:
-            print(f"[DEBUG SubTask4] FpsConditioning initialization verification:")
-            print(f"  - lin1.weight: mean={self.lin1.weight.mean().item():.6f}, std={self.lin1.weight.std().item():.6f}")
-            print(f"  - lin1.bias: all_zero={torch.all(self.lin1.bias == 0).item()}")
-            print(f"  - ln.weight: all_ones={torch.all(self.ln.weight == 1).item()}")
-            print(f"  - ln.bias: all_zero={torch.all(self.ln.bias == 0).item()}")
-            print(f"  - lin2.weight: all_zero={torch.all(self.lin2.weight == 0).item()}")
-            print(f"  - lin2.bias: all_zero={torch.all(self.lin2.bias == 0).item()}")
     
     def forward(self, x):
-        """Forward pass: lin1 -> SiLU -> LayerNorm -> lin2"""
-        # DEBUG: Print FPS conditioning values during training
-        if not hasattr(self, '_forward_call_count'):
-            self._forward_call_count = 0
-        
-        self._forward_call_count += 1
-        
-        # Print every 10th call to avoid spam, but show first few calls
-        # Only debug if weights are real tensors (not meta tensors)
-        if (self._forward_call_count <= 3 or self._forward_call_count % 10 == 0) and not self.lin2.weight.is_meta:
-            output = self.lin2(self.ln(self.act(self.lin1(x))))
-            
-            print(f"[DEBUG SubTask4] FpsConditioning forward #{self._forward_call_count}:")
-            print(f"  - Input FPS: {x.flatten()[:5].tolist()} (first 5 values)")
-            print(f"  - Output range: [{output.min().item():.6f}, {output.max().item():.6f}]")
-            print(f"  - Output mean_abs: {output.abs().mean().item():.6f}")
-            print(f"  - lin2.weight max_abs: {self.lin2.weight.abs().max().item():.6f}")
-            print(f"  - lin2.bias max_abs: {self.lin2.bias.abs().max().item():.6f}")
-            
-            return output
-        else:
-            # Normal forward pass without debug
-            return self.lin2(self.ln(self.act(self.lin1(x))))
+        """Forward pass: lin1 -> SiLU -> lin2"""
+        return self.lin2(self.act(self.lin1(x)))
 
 
 class FPSCrossAttentionAdapter(nn.Module):
@@ -366,7 +332,7 @@ class FPSCrossAttentionAdapter(nn.Module):
     _global_call_count = 0
     _total_adapters_created = 0
     
-    def __init__(self, dim, num_heads, fps_conditioning_dim, rank=8, gate_init=0.0, num_tokens=1):
+    def __init__(self, dim, num_heads, fps_conditioning_dim, rank=8, gate_init=0.0, num_tokens=1, lora_alpha=16):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -374,6 +340,9 @@ class FPSCrossAttentionAdapter(nn.Module):
         self.rank = rank
         self.fps_conditioning_dim = fps_conditioning_dim
         self.num_tokens = num_tokens  # Number of FPS conditioning tokens per head
+        
+        # LoRA scaling factor: lora_alpha / rank (standard LoRA scaling)
+        self.lora_scale = lora_alpha / rank
         
         # LoRA projections for K' and V' - always executed regardless of FPS values
         # Output dimension is num_tokens * dim to support multiple conditioning tokens
@@ -383,6 +352,7 @@ class FPSCrossAttentionAdapter(nn.Module):
         self.v_fps_up = nn.Linear(rank, num_tokens * dim, bias=False)
         
         # Learnable gate - always computed for checkpoint consistency
+        self.gate_init = gate_init  # Store original value for re-initialization
         self.gate_alpha = nn.Parameter(torch.tensor(gate_init))
         
         # Debug counter (only print every N forward passes)
@@ -399,14 +369,47 @@ class FPSCrossAttentionAdapter(nn.Module):
             FPSCrossAttentionAdapter._debug_instance = self
         
     def _init_lora_weights(self):
-        """Initialize LoRA weights: A random, B zeros"""
+        """Initialize LoRA weights for FPS adapter with gradient flow fix"""
         # Down projections (A): random init  
         nn.init.normal_(self.k_fps_down.weight, std=0.01)
         nn.init.normal_(self.v_fps_down.weight, std=0.01)
         
-        # Up projections (B): zeros (ensures initial delta = 0)
-        nn.init.zeros_(self.k_fps_up.weight)
-        nn.init.zeros_(self.v_fps_up.weight)
+        # Up projections (B): SMALL RANDOM INIT (fixes gradient flow)
+        # Unlike standard LoRA, we have no base weight matrix, so B=0 would
+        # create a dead branch with no gradients. Use very small random init.
+        nn.init.normal_(self.k_fps_up.weight, std=1e-4)  # Very small to minimize initial impact
+        nn.init.normal_(self.v_fps_up.weight, std=1e-4)  # But non-zero to allow gradients
+        
+        # Re-initialize gate_alpha to configured value (fixes DeepSpeed override)
+        # Note: self.gate_init stores the original configured value
+        if hasattr(self, 'gate_init'):
+            with torch.no_grad():
+                self.gate_alpha.fill_(self.gate_init)
+    
+    def verify_initialization(self):
+        """Verify FPS adapter initialization is correct (updated for gradient flow fix)"""
+        # Only verify if tensors are not meta tensors
+        if not self.k_fps_down.weight.is_meta:
+            # Check down projections have non-zero weights (random init)
+            k_down_nonzero = not torch.all(self.k_fps_down.weight == 0).item()
+            v_down_nonzero = not torch.all(self.v_fps_down.weight == 0).item()
+            
+            # Check up projections are SMALL but NON-ZERO (gradient flow fix)
+            k_up_nonzero = not torch.all(self.k_fps_up.weight == 0).item()
+            v_up_nonzero = not torch.all(self.v_fps_up.weight == 0).item()
+            k_up_small = self.k_fps_up.weight.abs().max().item() < 0.01  # Should be small
+            v_up_small = self.v_fps_up.weight.abs().max().item() < 0.01  # Should be small
+            
+            # Verify initialization is correct
+            init_correct = (k_down_nonzero and v_down_nonzero and 
+                          k_up_nonzero and v_up_nonzero and
+                          k_up_small and v_up_small)
+            gate_correct = abs(self.gate_alpha.item() - self.gate_init) < 1e-5
+            
+            return init_correct and gate_correct
+        else:
+            # Weights are meta tensors - skip verification
+            return None
     
     def _count_adapter_parameters(self):
         """Count parameters in this specific FPS adapter"""
@@ -430,14 +433,6 @@ class FPSCrossAttentionAdapter(nn.Module):
         Checkpoint-safe forward pass using only deterministic PyTorch operations.
         Always follows identical computation path regardless of fps_conditioning value.
         """
-        # DEBUG: Print FPS adapter configuration (only once per training)
-        if not hasattr(self, '_debug_printed'):
-            print(f"[DEBUG SubTask4] FPS Adapter Configuration:")
-            print(f"  - num_tokens: {self.num_tokens}")
-            print(f"  - rank: {self.rank}")
-            print(f"  - fps_conditioning_dim: {self.fps_conditioning_dim}")
-            print(f"  - dim: {self.dim}")
-            self._debug_printed = True
         
         # ALWAYS compute text cross-attention: Attn(Q, K_text, V_text)
         y_text = flash_attention(q, k_text, v_text, k_lens=context_lens)
@@ -447,11 +442,10 @@ class FPSCrossAttentionAdapter(nn.Module):
         k_fps_proj = self.k_fps_up(self.k_fps_down(fps_conditioning))  # [B, num_tokens * dim]
         v_fps_proj = self.v_fps_up(self.v_fps_down(fps_conditioning))  # [B, num_tokens * dim]
         
-        # DEBUG: Print tensor shapes during first forward pass
-        if not hasattr(self, '_shape_debug_printed'):
-            print(f"[DEBUG SubTask4] FpsConditioning tensor input: {fps_conditioning.shape}")
-            print(f"  - Expected fps_conditioning_dim: {self.fps_conditioning_dim}")
-            self._shape_debug_printed = True
+        # Apply LoRA scaling
+        k_fps_proj = k_fps_proj * self.lora_scale
+        v_fps_proj = v_fps_proj * self.lora_scale
+        
         
         # ALWAYS reshape for attention (deterministic shapes)
         batch_size = q.size(0)
@@ -519,7 +513,8 @@ class WanAttentionBlock(nn.Module):
                 fps_conditioning_dim=fps_adapter_config['fps_conditioning_dim'],
                 rank=fps_adapter_config['rank'],
                 gate_init=fps_adapter_config['gate_init'],
-                num_tokens=fps_adapter_config.get('num_tokens', 1)  # Default to 1 for backward compatibility
+                num_tokens=fps_adapter_config.get('num_tokens', 1),  # Default to 1 for backward compatibility
+                lora_alpha=fps_adapter_config.get('lora_alpha', 16)  # Default to 16 for LoRA scaling
             )
         else:
             self.fps_adapter = None
@@ -677,7 +672,8 @@ class WanModel(ModelMixin, ConfigMixin):
                  fps_tau_transform="log1p",
                  fps_tau_scale=0.33333334,
                  fps_embed_dim=256,
-                 fps_condition_hidden=64):
+                 fps_condition_hidden=64,
+                 fps_lora_alpha=16):
         r"""
         Initialize the diffusion model backbone.
 
@@ -750,16 +746,7 @@ class WanModel(ModelMixin, ConfigMixin):
         self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))
         
         # FPS conditioning encoder with special initialization
-        print(f"[DEBUG SubTask4] Creating FpsConditioning: out_dim={fps_embed_dim}, hidden={fps_condition_hidden}")
         self.fps_conditioning = FpsConditioning(out_dim=fps_embed_dim, hidden=fps_condition_hidden)
-        
-        # DEBUG: Check FpsConditioning weights immediately after creation
-        if not self.fps_conditioning.lin2.weight.is_meta:
-            print(f"[DEBUG SubTask4] FpsConditioning weights AFTER creation:")
-            print(f"  - lin2.weight all_zero: {torch.all(self.fps_conditioning.lin2.weight == 0).item()}")
-            print(f"  - lin2.bias all_zero: {torch.all(self.fps_conditioning.lin2.bias == 0).item()}")
-        else:
-            print(f"[DEBUG SubTask4] FpsConditioning weights AFTER creation: (meta tensors - skipping check)")
 
         # blocks
         if model_type in ('i2v', 'flf2v'):
@@ -788,35 +775,27 @@ class WanModel(ModelMixin, ConfigMixin):
                     'fps_conditioning_dim': fps_conditioning_dim,
                     'rank': fps_adapter_rank,
                     'gate_init': fps_adapter_gate_init,
-                    'num_tokens': fps_adapter_num_tokens
+                    'num_tokens': fps_adapter_num_tokens,
+                    'lora_alpha': fps_lora_alpha
                 } if i in fps_block_indices else None
             )
             for i in range(num_layers)
         ])
         
-        # DIRECT FPS ADAPTER PARAMETER COUNT - BRUTE FORCE METHOD
-        print(f"\n[DIRECT_FPS_COUNT] Manually counting FPS adapter parameters...")
+        # Count FPS adapter parameters silently
         total_fps_adapter_params = 0
-        fps_adapter_details = []
-        
         for i, block in enumerate(self.blocks):
             if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
-                block_params = 0
-                block_detail = []
                 for name, param in block.fps_adapter.named_parameters():
-                    param_count = param.numel()
-                    block_params += param_count
-                    block_detail.append(f"{name}:{param_count}")
-                
-                total_fps_adapter_params += block_params
-                fps_adapter_details.append(f"Block {i}: {block_params} params ({', '.join(block_detail)})")
-                
-        print(f"[DIRECT_FPS_COUNT] FOUND {total_fps_adapter_params:,} FPS ADAPTER PARAMETERS!")
-        print(f"[DIRECT_FPS_COUNT] Details:")
-        for detail in fps_adapter_details[:3]:  # Show first 3
-            print(f"  {detail}")
-        if len(fps_adapter_details) > 3:
-            print(f"  ... and {len(fps_adapter_details)-3} more blocks with FPS adapters")
+                    total_fps_adapter_params += param.numel()
+        
+        # Verify FPS adapter initialization silently
+        verified_adapters = 0
+        for i, block in enumerate(self.blocks):
+            if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
+                is_correct = block.fps_adapter.verify_initialization()
+                if is_correct:
+                    verified_adapters += 1
 
         # head
         self.head = Head(dim, out_dim, patch_size, eps)

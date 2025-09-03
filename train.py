@@ -453,18 +453,8 @@ if __name__ == '__main__':
             model.load_adapter_weights(init_from_existing)
     else:
         is_adapter = False
-        # MEMORY FIX: For FPS-only training, freeze all base model parameters 
-        # to match PEFT's memory efficiency behavior
-        if is_main_process():
-            print("[FPS_ONLY_TRAINING] Freezing base model parameters to save memory...")
-        base_params_frozen = 0
-        for name, param in model.transformer.named_parameters():
-            # Only freeze base model parameters, keep FPS parameters trainable
-            if 'fps_conditioning' not in name and 'fps_adapter' not in name:
-                param.requires_grad_(False)
-                base_params_frozen += 1
-        if is_main_process():
-            print(f"[FPS_ONLY_TRAINING] Frozen {base_params_frozen} base model parameters")
+        # NOTE: We'll freeze base model parameters AFTER creating the pipeline module
+        # to ensure proper gradient flow for FPS parameters
 
     # if this is a new run, create a new dir for it
     if not resume_from_checkpoint and is_main_process():
@@ -542,22 +532,89 @@ if __name__ == '__main__':
         **additional_pipeline_module_kwargs
     )
     
+    # MEMORY FIX: For FPS-only training, freeze base model parameters AFTER pipeline creation
+    # This ensures proper gradient flow setup
+    if not is_adapter:  # FPS-only training mode
+        if is_main_process():
+            print("[FPS_ONLY_TRAINING] Freezing base model parameters to save memory...")
+        base_params_frozen = 0
+        fps_params_kept = 0
+        for name, param in pipeline_model.named_parameters():
+            # Only freeze base model parameters, keep FPS parameters trainable
+            if 'fps_conditioning' not in name and 'fps_adapter' not in name:
+                param.requires_grad_(False)
+                base_params_frozen += 1
+            else:
+                param.requires_grad_(True)  # Explicitly ensure FPS params are trainable
+                fps_params_kept += 1
+        if is_main_process():
+            print(f"[FPS_ONLY_TRAINING] Frozen {base_params_frozen} base model parameters")
+            print(f"[FPS_ONLY_TRAINING] Kept {fps_params_kept} FPS parameters trainable")
+    
     # CRITICAL FIX: Enable FPS parameter gradients BEFORE optimizer creation
     # This ensures FPS parameters are included in optimizer's parameter groups
     fps_mlp_params_fixed = 0
     fps_adapter_params_fixed = 0
+    fps_params_already_enabled = 0
+    fps_params_disabled = 0
+    
+    # Debug: Check requires_grad status after freezing
+    print("\n[FPS_DEBUG] Checking requires_grad status after freezing:")
+    for name, param in pipeline_model.named_parameters():
+        if 'fps_conditioning' in name or 'fps_adapter' in name:
+            if param.requires_grad:
+                fps_params_already_enabled += 1
+            else:
+                fps_params_disabled += 1
+                
+    print(f"  FPS params with requires_grad=True: {fps_params_already_enabled}")
+    print(f"  FPS params with requires_grad=False: {fps_params_disabled}")
+    
+    # Double-check: Make absolutely sure FPS parameters have gradients enabled
     for name, param in pipeline_model.named_parameters():
         if 'fps_conditioning' in name:
-            param.requires_grad_(True)
-            fps_mlp_params_fixed += 1
+            if not param.requires_grad:
+                param.requires_grad_(True)
+                fps_mlp_params_fixed += 1
         elif 'fps_adapter' in name:
-            param.requires_grad_(True)
-            fps_adapter_params_fixed += 1
+            if not param.requires_grad:
+                param.requires_grad_(True)
+                fps_adapter_params_fixed += 1
     
     if fps_mlp_params_fixed > 0 or fps_adapter_params_fixed > 0:
-        print(f'[PRE_OPTIMIZER_FPS_FIX] Enabled gradients for {fps_mlp_params_fixed} FPS MLP + {fps_adapter_params_fixed} FPS adapter parameters BEFORE optimizer creation')
+        print(f'[FPS_FIX] Had to re-enable gradients for {fps_mlp_params_fixed} FPS MLP + {fps_adapter_params_fixed} FPS adapter parameters')
+        
+    # Debug: Final verification
+    fps_params_enabled_after = 0
+    for name, param in pipeline_model.named_parameters():
+        if 'fps_conditioning' in name or 'fps_adapter' in name:
+            if param.requires_grad:
+                fps_params_enabled_after += 1
+                
+    print(f"[FPS_DEBUG] Final check: {fps_params_enabled_after} FPS params have requires_grad=True")
     
     parameters_to_train = [p for p in pipeline_model.parameters() if p.requires_grad]
+    
+    # Debug: Count parameters to train
+    print(f"\n[FPS_DEBUG] Total parameters with requires_grad=True: {len(parameters_to_train)}")
+    fps_params_in_training = 0
+    for p in parameters_to_train:
+        # Check if this parameter is an FPS parameter by checking its shape/size
+        # FPS MLP parameters have specific shapes we can check
+        if len(p.shape) == 2:  # 2D tensor (weight matrices)
+            if p.shape == (64, 1):  # lin1.weight shape for FPS MLP
+                fps_params_in_training += 1
+            elif p.shape == (3072, 64):  # lin2.weight shape for FPS MLP
+                fps_params_in_training += 1
+            elif p.shape[0] == 32 or p.shape[1] == 32:  # LoRA matrices with rank 32
+                fps_params_in_training += 1
+        elif len(p.shape) == 1:  # 1D tensor (biases)
+            if p.shape[0] == 64 or p.shape[0] == 3072:  # FPS MLP biases
+                fps_params_in_training += 1
+        elif p.numel() == 1:  # gate_alpha is a single value
+            fps_params_in_training += 1
+            
+    print(f"[FPS_DEBUG] Estimated FPS parameters in training list: {fps_params_in_training}")
 
     if config['compile']:
         pipeline_model.compile()
@@ -694,6 +751,23 @@ if __name__ == '__main__':
             param_groups = model.get_param_groups(model_parameters)
             return klass(param_groups, *args, **kwargs)
 
+    # Debug: Check what parameters are being passed to optimizer
+    print(f"\n[OPTIMIZER_DEBUG] Creating optimizer with {len(parameters_to_train)} parameters")
+    fps_params_count = 0
+    for p in parameters_to_train:
+        # Try to identify FPS parameters by their shapes
+        if len(p.shape) == 2:  # 2D tensors
+            if p.shape == (64, 1) or p.shape == (3072, 64):  # FPS MLP weights
+                fps_params_count += 1
+            elif p.shape[0] == 32 or p.shape[1] == 32:  # LoRA matrices with rank 32
+                fps_params_count += 1
+        elif len(p.shape) == 1:  # 1D tensors
+            if p.shape[0] == 64 or p.shape[0] == 3072:  # FPS MLP biases
+                fps_params_count += 1
+        elif p.numel() == 1:  # gate_alpha
+            fps_params_count += 1
+    print(f"[OPTIMIZER_DEBUG] Estimated {fps_params_count} FPS parameters in optimizer")
+    
     model_engine, optimizer, _, _ = deepspeed.initialize(
         args=args,
         model=pipeline_model,
@@ -703,16 +777,56 @@ if __name__ == '__main__':
     )
     model.model_engine = model_engine
     
-    # --- Re-apply FpsConditioning init AFTER DeepSpeed materializes parameters ---
-    if hasattr(model, "transformer") and hasattr(model.transformer, "fps_conditioning"):
-        print("[FPS_INIT_FIX] Re-initializing FpsConditioning after DeepSpeed.initialize()")
-        model.transformer.fps_conditioning._init_weights()
-
-        # Debug check
-        w = model.transformer.fps_conditioning.lin2.weight
-        b = model.transformer.fps_conditioning.lin2.bias
-        print("[FPS_INIT_FIX] lin2.weight all_zero:", torch.all(w == 0).item())
-        print("[FPS_INIT_FIX] lin2.bias all_zero:", torch.all(b == 0).item())
+    # Debug: Check optimizer parameter groups after initialization
+    print("\n[OPTIMIZER_DEBUG] After DeepSpeed initialization:")
+    if hasattr(optimizer, 'param_groups'):
+        total_params_in_optimizer = 0
+        for i, group in enumerate(optimizer.param_groups):
+            num_params = len(group['params'])
+            total_params_in_optimizer += num_params
+            print(f"  Param group {i}: {num_params} parameters, lr={group['lr']}")
+        print(f"  Total parameters in optimizer: {total_params_in_optimizer}")
+    else:
+        print("  Optimizer doesn't have param_groups attribute")
+    
+    # Debug: Check if FPS parameters are in the pipeline module after DeepSpeed init
+    fps_params_after_init = 0
+    fps_params_requires_grad = 0
+    for name, param in model_engine.module.named_parameters():
+        if 'fps_conditioning' in name or 'fps_adapter' in name:
+            fps_params_after_init += 1
+            if param.requires_grad:
+                fps_params_requires_grad += 1
+    print(f"\n[FPS_DEBUG] After DeepSpeed init:")
+    print(f"  Found {fps_params_after_init} FPS parameters in pipeline module")
+    print(f"  {fps_params_requires_grad} have requires_grad=True")
+    
+    # --- Re-apply FPS initialization for pipeline parallel ---
+    # In pipeline parallel mode, we need to re-initialize through the pipeline module
+    print("\n[FPS_INIT] Re-initializing FPS parameters after DeepSpeed...")
+    fps_mlp_reinitialized = 0
+    fps_adapter_reinitialized = 0
+    
+    for name, module in model_engine.module.named_modules():
+        if 'fps_conditioning' in name and hasattr(module, '_init_weights'):
+            module._init_weights()
+            fps_mlp_reinitialized += 1
+        elif 'fps_adapter' in name and hasattr(module, '_init_lora_weights'):
+            module._init_lora_weights()
+            fps_adapter_reinitialized += 1
+    
+    print(f"[FPS_INIT] Re-initialized {fps_mlp_reinitialized} FPS MLP modules")
+    print(f"[FPS_INIT] Re-initialized {fps_adapter_reinitialized} FPS adapter modules")
+    
+    # Verify initialization (for adapters that have verify method)
+    verified_adapters = 0
+    for name, module in model_engine.module.named_modules():
+        if 'fps_adapter' in name and hasattr(module, 'verify_initialization'):
+            if module.verify_initialization():
+                verified_adapters += 1
+    
+    if verified_adapters > 0:
+        print(f"[FPS_INIT] Verified {verified_adapters} FPS adapters have correct initialization")
 
     
     if model_engine.is_pipe_parallel:
@@ -788,6 +902,196 @@ if __name__ == '__main__':
         evaluate(model, model_engine, eval_dataloaders, tb_writer, 0, config['eval_gradient_accumulation_steps'], disable_block_swap_for_eval)
 
     # TODO: this is state we need to save and resume when resuming from checkpoint. It only affects logging.
+    # Function to log FPS parameter magnitudes for debugging
+    def log_fps_param_magnitudes(model_engine, epoch):
+        """Log magnitudes of FPS parameters at the end of each epoch"""
+        if not is_main_process():
+            return
+            
+        print(f"\n[FPS_MAGNITUDE] Epoch {epoch} - Checking pipeline model parameters:")
+        
+        # In pipeline parallel mode, we need to iterate through the pipeline module's parameters
+        fps_mlp_params = {}
+        fps_adapter_params = {}
+        
+        for name, param in model_engine.module.named_parameters():
+            if 'fps_conditioning' in name:
+                if not param.is_meta:
+                    fps_mlp_params[name] = {
+                        'mean': param.data.abs().mean().item(),
+                        'std': param.data.std().item(),
+                        'max': param.data.abs().max().item(),
+                        'requires_grad': param.requires_grad
+                    }
+            elif 'fps_adapter' in name:
+                if not param.is_meta:
+                    fps_adapter_params[name] = {
+                        'mean': param.data.abs().mean().item(),
+                        'std': param.data.std().item(),
+                        'max': param.data.abs().max().item(),
+                        'requires_grad': param.requires_grad
+                    }
+        
+        # Print FPS MLP parameters
+        if fps_mlp_params:
+            print("  FPS MLP Parameters:")
+            for name, stats in fps_mlp_params.items():
+                short_name = name.split('.')[-2:]
+                short_name = '.'.join(short_name)
+                print(f"    {short_name}: mean={stats['mean']:.6f}, std={stats['std']:.6f}, max={stats['max']:.6f}, grad={stats['requires_grad']}")
+        
+        # Print FPS adapter parameters (sample a few)
+        if fps_adapter_params:
+            print("  FPS Adapter Parameters (sample):")
+            count = 0
+            for name, stats in fps_adapter_params.items():
+                if count >= 10:  # Only show first 10 for brevity
+                    print(f"    ... and {len(fps_adapter_params) - 10} more")
+                    break
+                short_name = name.split('.')[-3:]
+                short_name = '.'.join(short_name)
+                print(f"    {short_name}: mean={stats['mean']:.6f}, std={stats['std']:.6f}, max={stats['max']:.6f}, grad={stats['requires_grad']}")
+                count += 1
+        
+        if not fps_mlp_params and not fps_adapter_params:
+            print("  WARNING: No FPS parameters found in pipeline model!")
+            return
+            
+        print(f"\n[FPS_MAGNITUDE] Epoch {epoch} Parameter Magnitudes:")
+        
+        # Track FPS conditioning MLP parameters
+        if hasattr(model.transformer, 'fps_conditioning'):
+            fps_cond = model.transformer.fps_conditioning
+            if hasattr(fps_cond, 'lin1') and not fps_cond.lin1.weight.is_meta:
+                w1_mag = fps_cond.lin1.weight.data.abs().mean().item()
+                b1_mag = fps_cond.lin1.bias.data.abs().mean().item() if fps_cond.lin1.bias is not None else 0
+                print(f"  FPS MLP lin1: weight={w1_mag:.6f}, bias={b1_mag:.6f}")
+            if hasattr(fps_cond, 'lin2') and not fps_cond.lin2.weight.is_meta:
+                w2_mag = fps_cond.lin2.weight.data.abs().mean().item()
+                b2_mag = fps_cond.lin2.bias.data.abs().mean().item() if fps_cond.lin2.bias is not None else 0
+                print(f"  FPS MLP lin2: weight={w2_mag:.6f}, bias={b2_mag:.6f}")
+        
+        # Track FPS adapter parameters (sample a few blocks)
+        adapter_stats = {'gate_alpha': [], 'k_down': [], 'v_down': [], 'k_up': [], 'v_up': []}
+        blocks_to_sample = [27, 30, 35, 39]  # Sample a few blocks across the range
+        
+        for block_idx in blocks_to_sample:
+            if block_idx < len(model.transformer.blocks):
+                block = model.transformer.blocks[block_idx]
+                if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
+                    adapter = block.fps_adapter
+                    if not adapter.gate_alpha.is_meta:
+                        # Gate alpha value (sigmoid of this gives the gate)
+                        gate_val = adapter.gate_alpha.item()
+                        gate_sigmoid = torch.sigmoid(adapter.gate_alpha).item()
+                        adapter_stats['gate_alpha'].append((block_idx, gate_val, gate_sigmoid))
+                    
+                    # LoRA weights magnitudes
+                    if not adapter.k_fps_down.weight.is_meta:
+                        k_down_mag = adapter.k_fps_down.weight.data.abs().mean().item()
+                        v_down_mag = adapter.v_fps_down.weight.data.abs().mean().item()
+                        k_up_mag = adapter.k_fps_up.weight.data.abs().mean().item()
+                        v_up_mag = adapter.v_fps_up.weight.data.abs().mean().item()
+                        
+                        adapter_stats['k_down'].append((block_idx, k_down_mag))
+                        adapter_stats['v_down'].append((block_idx, v_down_mag))
+                        adapter_stats['k_up'].append((block_idx, k_up_mag))
+                        adapter_stats['v_up'].append((block_idx, v_up_mag))
+        
+        # Print adapter statistics
+        if adapter_stats['gate_alpha']:
+            print(f"  FPS Adapter Gates (alpha -> sigmoid):")
+            for block_idx, alpha, sigmoid in adapter_stats['gate_alpha']:
+                print(f"    Block {block_idx}: alpha={alpha:.4f} -> gate={sigmoid:.4f}")
+        
+        if adapter_stats['k_down']:
+            print(f"  FPS Adapter LoRA Down (A) magnitudes:")
+            for i, (block_idx, k_mag) in enumerate(adapter_stats['k_down']):
+                v_mag = adapter_stats['v_down'][i][1]
+                print(f"    Block {block_idx}: k_down={k_mag:.6f}, v_down={v_mag:.6f}")
+            
+            print(f"  FPS Adapter LoRA Up (B) magnitudes:")
+            for i, (block_idx, k_mag) in enumerate(adapter_stats['k_up']):
+                v_mag = adapter_stats['v_up'][i][1]
+                print(f"    Block {block_idx}: k_up={k_mag:.6f}, v_up={v_mag:.6f}")
+    
+    def debug_fps_param_updates(model_engine, step):
+        """Debug function to track FPS parameter updates and gradients during training"""
+        if not is_main_process():
+            return
+            
+        # For pipeline parallel, check parameters directly from the pipeline module
+        fps_params_with_grad = 0
+        fps_params_without_grad = 0
+        fps_param_samples = []
+        
+        for name, param in model_engine.module.named_parameters():
+            if 'fps_conditioning' in name or 'fps_adapter' in name:
+                if param.grad is not None:
+                    fps_params_with_grad += 1
+                    if len(fps_param_samples) < 5:  # Sample first 5 params with gradients
+                        grad_mean = param.grad.abs().mean().item()
+                        param_mean = param.data.abs().mean().item()
+                        fps_param_samples.append((name.split('.')[-2:], param_mean, grad_mean))
+                else:
+                    fps_params_without_grad += 1
+        
+        if fps_params_with_grad > 0 or fps_params_without_grad > 0:
+            print(f"\n[FPS_GRAD_DEBUG] Step {step}:")
+            print(f"  FPS params with gradients: {fps_params_with_grad}")
+            print(f"  FPS params without gradients: {fps_params_without_grad}")
+            
+            if fps_param_samples:
+                print("  Sample parameters (name, param_mean, grad_mean):")
+                for name_parts, param_mean, grad_mean in fps_param_samples:
+                    name = '.'.join(name_parts)
+                    print(f"    {name}: param={param_mean:.6f}, grad={grad_mean:.6f}")
+            
+            if fps_params_without_grad > 0:
+                print("  WARNING: Some FPS parameters don't have gradients!")
+                
+        return
+            
+        print(f"\n[FPS_DEBUG] Step {step} Parameter Status:")
+        
+        # Track FPS conditioning MLP
+        fps_cond = model.transformer.fps_conditioning
+        if hasattr(fps_cond, 'lin1'):
+            w1_mean = fps_cond.lin1.weight.data.abs().mean().item()
+            w1_grad = fps_cond.lin1.weight.grad.abs().mean().item() if fps_cond.lin1.weight.grad is not None else 0.0
+            print(f"  FPS MLP lin1.weight: mean={w1_mean:.6f}, grad_mean={w1_grad:.6f}")
+            
+        if hasattr(fps_cond, 'lin2'):
+            w2_mean = fps_cond.lin2.weight.data.abs().mean().item()
+            w2_grad = fps_cond.lin2.weight.grad.abs().mean().item() if fps_cond.lin2.weight.grad is not None else 0.0
+            print(f"  FPS MLP lin2.weight: mean={w2_mean:.6f}, grad_mean={w2_grad:.6f}")
+        
+        # Track a few FPS adapters
+        sample_blocks = [27, 35, 39]  # Sample blocks
+        for block_idx in sample_blocks:
+            if block_idx < len(model.transformer.blocks):
+                block = model.transformer.blocks[block_idx]
+                if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
+                    adapter = block.fps_adapter
+                    
+                    # Gate alpha
+                    gate_val = adapter.gate_alpha.item()
+                    gate_grad = adapter.gate_alpha.grad.item() if adapter.gate_alpha.grad is not None else 0.0
+                    print(f"  Block {block_idx} gate_alpha: val={gate_val:.4f}, grad={gate_grad:.6f}")
+                    
+                    # LoRA weights
+                    k_down_mean = adapter.k_fps_down.weight.data.abs().mean().item()
+                    k_down_grad = adapter.k_fps_down.weight.grad.abs().mean().item() if adapter.k_fps_down.weight.grad is not None else 0.0
+                    
+                    k_up_mean = adapter.k_fps_up.weight.data.abs().mean().item()
+                    k_up_grad = adapter.k_fps_up.weight.grad.abs().mean().item() if adapter.k_fps_up.weight.grad is not None else 0.0
+                    
+                    print(f"  Block {block_idx} k_fps_down: mean={k_down_mean:.6f}, grad={k_down_grad:.6f}")
+                    print(f"  Block {block_idx} k_fps_up: mean={k_up_mean:.6f}, grad={k_up_grad:.6f}")
+    
+    # Log initial FPS parameter magnitudes before training starts
+    log_fps_param_magnitudes(model_engine, 0)
+    
     epoch_loss = 0
     num_steps = 0
     empty_cuda_cache()
@@ -797,6 +1101,10 @@ if __name__ == '__main__':
         loss = model_engine.train_batch(iterator).item()
         epoch_loss += loss
         num_steps += 1
+        
+        # Debug: Track FPS parameter updates every few steps
+        if step % 2 == 0:  # Log every 2 steps for more visibility
+            debug_fps_param_updates(model_engine, step)
         
         train_dataloader.sync_epoch()
 
@@ -823,6 +1131,10 @@ if __name__ == '__main__':
                 tb_writer.add_scalar(f'train/epoch_loss', epoch_loss/num_steps, epoch)
                 if wandb_enable:
                     wandb.log({'train/epoch_loss': epoch_loss/num_steps, 'epoch': epoch})
+            
+            # Log FPS parameter magnitudes at end of epoch
+            log_fps_param_magnitudes(model_engine, epoch)
+            
             epoch_loss = 0
             num_steps = 0
             epoch = new_epoch

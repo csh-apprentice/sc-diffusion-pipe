@@ -64,23 +64,11 @@ class WanModelFromSafetensors(WanModel):
         # Verify FPS parameters are properly loaded/initialized
         fps_params = [name for name, _ in model.named_parameters() if 'fps' in name.lower()]
         if fps_params:
-            print(f'[DEBUG] FPS parameters in model: {len(fps_params)} found')
-            print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
-            
-            # DEBUG: Check fps_conditioning parameters after checkpoint loading
-            for name, param in model.named_parameters():
-                if 'fps_conditioning.lin2' in name and not param.is_meta:
-                    if 'weight' in name:
-                        print(f'[DEBUG] After checkpoint loading - {name}: max_abs={param.abs().max().item():.6f}, all_zero={torch.all(param == 0).item()}')
-                    elif 'bias' in name:
-                        print(f'[DEBUG] After checkpoint loading - {name}: max_abs={param.abs().max().item():.6f}, all_zero={torch.all(param == 0).item()}')
-            
             # CRITICAL FIX: Ensure all FPS parameters have requires_grad=True
             for name, param in model.named_parameters():
                 if 'fps_conditioning' in name:
                     param.requires_grad_(True)
-        else:
-            print('[DEBUG] No FPS parameters found in model (this is expected if no FPS conditioning is used)')
+        # No additional setup needed for models without FPS parameters
 
         return model
 
@@ -258,7 +246,8 @@ class WanPipeline(BasePipeline):
                 'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
                 'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
                 'fps_embed_dim': self.model_config.get('fps_embed_dim', 256),
-                'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64)
+                'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64),
+                'fps_lora_alpha': self.model_config.get('fps_lora_alpha', 16)
             })
             self.transformer = WanModelFromSafetensors.from_pretrained(
                 self.transformer_path,
@@ -278,7 +267,8 @@ class WanPipeline(BasePipeline):
                     'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
                     'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
                     'fps_embed_dim': self.model_config.get('fps_embed_dim', 256),
-                    'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64)
+                    'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64),
+                    'fps_lora_alpha': self.model_config.get('fps_lora_alpha', 16)
                 })
                 self.transformer = WanModel.from_config(modified_config)
             state_dict = {}
@@ -322,18 +312,12 @@ class WanPipeline(BasePipeline):
                         init_value = torch.randn(param.shape, dtype=dtype_to_use) * 0.02
                     set_module_tensor_to_device(self.transformer, name, device='cpu', dtype=dtype_to_use, value=init_value)
 
-        # Verify FPS parameters are properly loaded/initialized  
+        # CRITICAL FIX: Ensure all FPS parameters have requires_grad=True
         fps_params = [name for name, _ in self.transformer.named_parameters() if 'fps' in name.lower()]
         if fps_params:
-            print(f'[DEBUG] FPS parameters in transformer: {len(fps_params)} found')
-            print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
-            
-            # CRITICAL FIX: Ensure all FPS parameters have requires_grad=True
             for name, param in self.transformer.named_parameters():
                 if 'fps_conditioning' in name:
                     param.requires_grad_(True)
-        else:
-            print('[DEBUG] No FPS parameters found in transformer (this is expected if no FPS conditioning is used)')
 
         self.transformer.train()
         # We'll need the original parameter name for saving, and the name changes once we wrap modules for pipeline parallelism,
@@ -419,25 +403,11 @@ class WanPipeline(BasePipeline):
                 mean = tensor.mean().item()
                 print(f'[FPS_VALUES_SAVE] {key}: norm={norm:.6f}, mean={mean:.6f}')
         
-        # Verify FPS parameters are included in checkpoint
-        fps_params = [k for k in peft_state_dict.keys() if 'fps' in k.lower()]
-        if fps_params:
-            print(f'[DEBUG] FPS parameters in checkpoint: {len(fps_params)} found')
-            print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
-        else:
-            print('[DEBUG] WARNING: No FPS parameters found in checkpoint!')
-            
+        # Save the PEFT state dict
         safetensors.torch.save_file(peft_state_dict, save_dir / 'adapter_model.safetensors', metadata={'format': 'pt'})
 
     def save_model(self, save_dir, state_dict):
-        # Verify FPS parameters are included in full model checkpoint
-        fps_params = [k for k in state_dict.keys() if 'fps' in k.lower()]
-        if fps_params:
-            print(f'[DEBUG] FPS parameters in full model checkpoint: {len(fps_params)} found')
-            print(f'[DEBUG] FPS parameter names: {fps_params[:5]}')  # Show first 5
-        else:
-            print('[DEBUG] No FPS parameters found in full model checkpoint')
-            
+        # Save the full model state dict
         safetensors.torch.save_file(state_dict, save_dir / 'model.safetensors', metadata={'format': 'pt'})
         
     def test_fps_checkpoint_compatibility(self):
@@ -451,8 +421,6 @@ class WanPipeline(BasePipeline):
                 fps_params_before[name] = param.data.clone()
         
         if fps_params_before:
-            print(f'[DEBUG] Found {len(fps_params_before)} FPS parameters to test')
-            
             # Test that parameters have the expected names and shapes
             expected_patterns = ['fps_conditioning', 'fps_adapter', 'gate_alpha']
             found_patterns = []
@@ -462,8 +430,6 @@ class WanPipeline(BasePipeline):
                         found_patterns.append(pattern)
                         break
             
-            print(f'[DEBUG] FPS parameter types found: {set(found_patterns)}')
-            
             # Verify parameter ranges are reasonable
             for name, param in fps_params_before.items():
                 param_stats = {
@@ -472,12 +438,13 @@ class WanPipeline(BasePipeline):
                     'min': param.min().item(),
                     'max': param.max().item()
                 }
-                print(f'[DEBUG] {name}: shape={param.shape}, stats={param_stats}')
+                # Parameter stats computed for verification
+                pass
                 
-            print('[DEBUG] FPS checkpoint compatibility test completed successfully')
+            # FPS checkpoint compatibility test completed successfully
             return True
         else:
-            print('[DEBUG] No FPS parameters found - checkpoint test skipped')
+            # No FPS parameters found - checkpoint test skipped
             return False
 
     def get_preprocess_media_file_fn(self):
