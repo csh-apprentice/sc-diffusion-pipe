@@ -991,11 +991,17 @@ if __name__ == '__main__':
                 block = model.transformer.blocks[block_idx]
                 if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
                     adapter = block.fps_adapter
-                    if not adapter.gate_alpha.is_meta:
-                        # Gate alpha value (sigmoid of this gives the gate)
+                    # Handle different gate modes
+                    if adapter.gate_mode == 'learned' and hasattr(adapter, 'gate_alpha') and not adapter.gate_alpha.is_meta:
+                        # Learned gate: gate_alpha is trainable parameter
                         gate_val = adapter.gate_alpha.item()
                         gate_sigmoid = torch.sigmoid(adapter.gate_alpha).item()
                         adapter_stats['gate_alpha'].append((block_idx, gate_val, gate_sigmoid))
+                    elif adapter.gate_mode == 'fixed' and hasattr(adapter, 'gate_fixed'):
+                        # Fixed gate: gate_fixed is constant buffer
+                        gate_val = adapter.gate_fixed.item()
+                        gate_sigmoid = gate_val  # No sigmoid needed for fixed mode
+                        adapter_stats['gate_alpha'].append((block_idx, f"fixed:{gate_val}", gate_sigmoid))
                     
                     # LoRA weights magnitudes
                     if not adapter.k_fps_down.weight.is_meta:
@@ -1013,7 +1019,11 @@ if __name__ == '__main__':
         if adapter_stats['gate_alpha']:
             print(f"  FPS Adapter Gates (alpha -> sigmoid):")
             for block_idx, alpha, sigmoid in adapter_stats['gate_alpha']:
-                print(f"    Block {block_idx}: alpha={alpha:.4f} -> gate={sigmoid:.4f}")
+                # Handle both numeric and string alpha values (for fixed vs learned gates)
+                if isinstance(alpha, str):
+                    print(f"    Block {block_idx}: {alpha} -> gate={sigmoid:.4f}")
+                else:
+                    print(f"    Block {block_idx}: alpha={alpha:.4f} -> gate={sigmoid:.4f}")
         
         if adapter_stats['k_down']:
             print(f"  FPS Adapter LoRA Down (A) magnitudes:")
@@ -1047,23 +1057,9 @@ if __name__ == '__main__':
                 else:
                     fps_params_without_grad += 1
         
-        if fps_params_with_grad > 0 or fps_params_without_grad > 0:
-            print(f"\n[FPS_GRAD_DEBUG] Step {step}:")
-            print(f"  FPS params with gradients: {fps_params_with_grad}")
-            print(f"  FPS params without gradients: {fps_params_without_grad}")
-            
-            if fps_param_samples:
-                print("  Sample parameters (name, param_mean, grad_mean):")
-                for name_parts, param_mean, grad_mean in fps_param_samples:
-                    name = '.'.join(name_parts)
-                    print(f"    {name}: param={param_mean:.6f}, grad={grad_mean:.6f}")
-            
-            if fps_params_without_grad > 0:
-                print("  WARNING: Some FPS parameters don't have gradients!")
+        # Debug output removed - FPS gradient tracking no longer needed
                 
         return
-            
-        print(f"\n[FPS_DEBUG] Step {step} Parameter Status:")
         
         # Track FPS conditioning MLP
         fps_cond = model.transformer.fps_conditioning

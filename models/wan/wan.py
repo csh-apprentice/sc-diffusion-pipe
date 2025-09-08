@@ -247,7 +247,9 @@ class WanPipeline(BasePipeline):
                 'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
                 'fps_embed_dim': self.model_config.get('fps_embed_dim', 256),
                 'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64),
-                'fps_lora_alpha': self.model_config.get('fps_lora_alpha', 16)
+                'fps_lora_alpha': self.model_config.get('fps_lora_alpha', 16),
+                'fps_gate_mode': self.model_config.get('fps_gate_mode', 'fixed'),
+                'fps_gate_fixed_value': self.model_config.get('fps_gate_fixed_value', 0.5)
             })
             self.transformer = WanModelFromSafetensors.from_pretrained(
                 self.transformer_path,
@@ -268,7 +270,9 @@ class WanPipeline(BasePipeline):
                     'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
                     'fps_embed_dim': self.model_config.get('fps_embed_dim', 256),
                     'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64),
-                    'fps_lora_alpha': self.model_config.get('fps_lora_alpha', 16)
+                    'fps_lora_alpha': self.model_config.get('fps_lora_alpha', 16),
+                    'fps_gate_mode': self.model_config.get('fps_gate_mode', 'fixed'),
+                    'fps_gate_fixed_value': self.model_config.get('fps_gate_fixed_value', 0.5)
                 })
                 self.transformer = WanModel.from_config(modified_config)
             state_dict = {}

@@ -332,7 +332,8 @@ class FPSCrossAttentionAdapter(nn.Module):
     _global_call_count = 0
     _total_adapters_created = 0
     
-    def __init__(self, dim, num_heads, fps_conditioning_dim, rank=8, gate_init=0.0, num_tokens=1, lora_alpha=16):
+    def __init__(self, dim, num_heads, fps_conditioning_dim, rank=8, gate_init=0.0, num_tokens=1, lora_alpha=16, 
+                 gate_mode='learned', gate_fixed_value=0.5):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -355,9 +356,20 @@ class FPSCrossAttentionAdapter(nn.Module):
         # This ensures K_fps and K_text are on the same scale before attention
         self.norm_k_fps = WanRMSNorm(dim, eps=1e-6)
         
-        # Learnable gate - always computed for checkpoint consistency
-        self.gate_init = gate_init  # Store original value for re-initialization
-        self.gate_alpha = nn.Parameter(torch.tensor(gate_init))
+        # Configurable gate system
+        self.gate_mode = gate_mode
+        self.gate_init = gate_init  # Store original value for learned mode
+        self.gate_fixed_value = gate_fixed_value  # Store fixed value for fixed mode
+        
+        if gate_mode == 'learned':
+            # Learnable gate parameter (trainable) - controls FPS vs text attention blending
+            # Initialize to gate_init value (e.g., 0.0 -> sigmoid(0) = 0.5)
+            self.gate_alpha = nn.Parameter(torch.tensor(gate_init))
+        elif gate_mode == 'fixed':
+            # Fixed gate mode - use constant gate value directly, no trainable parameters
+            self.register_buffer('gate_fixed', torch.tensor(gate_fixed_value))
+        else:
+            raise ValueError(f"Unknown gate_mode: {gate_mode}. Must be 'learned' or 'fixed'")
         
         # Debug counter (only print every N forward passes)
         self.debug_counter = 0
@@ -388,11 +400,11 @@ class FPSCrossAttentionAdapter(nn.Module):
         with torch.no_grad():
             self.norm_k_fps.weight.fill_(1.0)
         
-        # Re-initialize gate_alpha to configured value (fixes DeepSpeed override)
-        # Note: self.gate_init stores the original configured value
-        if hasattr(self, 'gate_init'):
+        # Re-initialize gate parameters based on gate mode (fixes DeepSpeed override)
+        if self.gate_mode == 'learned' and hasattr(self, 'gate_init'):
             with torch.no_grad():
                 self.gate_alpha.fill_(self.gate_init)
+        # Note: Fixed gate mode doesn't need reinitialization as it uses a buffer
     
     def verify_initialization(self):
         """Verify FPS adapter initialization is correct (updated for gradient flow fix)"""
@@ -412,7 +424,13 @@ class FPSCrossAttentionAdapter(nn.Module):
             init_correct = (k_down_nonzero and v_down_nonzero and 
                           k_up_nonzero and v_up_nonzero and
                           k_up_small and v_up_small)
-            gate_correct = abs(self.gate_alpha.item() - self.gate_init) < 1e-5
+            # Verify gate initialization based on gate mode
+            if self.gate_mode == 'learned':
+                gate_correct = abs(self.gate_alpha.item() - self.gate_init) < 1e-5
+            elif self.gate_mode == 'fixed':
+                gate_correct = abs(self.gate_fixed.item() - self.gate_fixed_value) < 1e-5
+            else:
+                gate_correct = False
             
             return init_correct and gate_correct
         else:
@@ -470,22 +488,35 @@ class FPSCrossAttentionAdapter(nn.Module):
         # Debug: Track FPS vs text ratio (detached from gradient computation)
         if hasattr(self, 'debug_counter'):
             self.debug_counter += 1
-            if self.debug_counter % 100 == 0:  # Every 100 forward passes
+            if self.debug_counter % 1000 == 0:  # Every 1000 forward passes
                 with torch.no_grad():  # Completely detached from gradient computation
                     # Create detached copies to avoid gradient issues
                     y_text_detached = y_text.detach()
                     y_fps_detached = y_fps.detach()
-                    gate_alpha_detached = self.gate_alpha.detach()
                     
                     y_text_norm = torch.norm(y_text_detached).item()
                     y_fps_norm = torch.norm(y_fps_detached).item()
                     ratio = y_fps_norm / (y_text_norm + 1e-8)  # Avoid division by zero
-                    gate_val = torch.sigmoid(gate_alpha_detached).item()
                     
-                    print(f"[FPS_RATIO] Forward {self.debug_counter}: ||y_fps||/||y_text|| = {ratio:.6f}, gate = {gate_val:.4f}")
+                    # Get gate value based on gate mode
+                    if self.gate_mode == 'learned':
+                        gate_alpha_detached = self.gate_alpha.detach()
+                        gate_val = torch.sigmoid(gate_alpha_detached).item()
+                    elif self.gate_mode == 'fixed':
+                        gate_val = self.gate_fixed.item()
+                    else:
+                        gate_val = 0.0  # fallback
+                    
+                    print(f"[FPS_RATIO] Forward {self.debug_counter}: ||y_fps||/||y_text|| = {ratio:.6f}, gate = {gate_val:.4f} ({self.gate_mode})")
         
         # ALWAYS compute gated combination (deterministic operation)
-        gate = torch.sigmoid(self.gate_alpha)
+        if self.gate_mode == 'learned':
+            gate = torch.sigmoid(self.gate_alpha)
+        elif self.gate_mode == 'fixed':
+            gate = self.gate_fixed
+        else:
+            raise ValueError(f"Unknown gate_mode: {self.gate_mode}")
+            
         y_combined = y_text + gate * y_fps
         
         return y_combined
@@ -543,7 +574,9 @@ class WanAttentionBlock(nn.Module):
                 rank=fps_adapter_config['rank'],
                 gate_init=fps_adapter_config['gate_init'],
                 num_tokens=fps_adapter_config.get('num_tokens', 1),  # Default to 1 for backward compatibility
-                lora_alpha=fps_adapter_config.get('lora_alpha', 16)  # Default to 16 for LoRA scaling
+                lora_alpha=fps_adapter_config.get('lora_alpha', 16),  # Default to 16 for LoRA scaling
+                gate_mode=fps_adapter_config.get('gate_mode', 'fixed'),  # Default to fixed mode
+                gate_fixed_value=fps_adapter_config.get('gate_fixed_value', 0.5)  # Default fixed value
             )
         else:
             self.fps_adapter = None
@@ -702,7 +735,9 @@ class WanModel(ModelMixin, ConfigMixin):
                  fps_tau_scale=0.33333334,
                  fps_embed_dim=256,
                  fps_condition_hidden=64,
-                 fps_lora_alpha=16):
+                 fps_lora_alpha=16,
+                 fps_gate_mode='fixed',
+                 fps_gate_fixed_value=0.5):
         r"""
         Initialize the diffusion model backbone.
 
@@ -805,7 +840,9 @@ class WanModel(ModelMixin, ConfigMixin):
                     'rank': fps_adapter_rank,
                     'gate_init': fps_adapter_gate_init,
                     'num_tokens': fps_adapter_num_tokens,
-                    'lora_alpha': fps_lora_alpha
+                    'lora_alpha': fps_lora_alpha,
+                    'gate_mode': fps_gate_mode,
+                    'gate_fixed_value': fps_gate_fixed_value
                 } if i in fps_block_indices else None
             )
             for i in range(num_layers)

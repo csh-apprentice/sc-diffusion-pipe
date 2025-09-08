@@ -92,6 +92,19 @@ fps_adapter_gate_init = 0.0                       # EXTREME: sigmoid(0) = 0.5 (5
 # SubTask 6: Configurable LoRA alpha scaling
 fps_lora_alpha = 32.0                             # LoRA alpha = rank for scale = 1.0 (scale = alpha/rank = 32/32 = 1.0)
 
+# ========== NEW: CONFIGURABLE GATE MODES ==========
+# Choose between learned and fixed gate modes:
+# - 'learned': Gate is trainable parameter starting from fps_adapter_gate_init (old behavior)
+# - 'fixed': Gate is constant value from fps_gate_fixed_value (new behavior)
+
+fps_gate_mode = "fixed"                           # NEW: Gate mode - "learned" or "fixed"
+fps_gate_fixed_value = 0.8                        # NEW: Fixed gate value when fps_gate_mode="fixed" (0.8 = 80% FPS influence)
+
+# Example configurations:
+# For maximum FPS impact: fps_gate_mode = "fixed", fps_gate_fixed_value = 1.0
+# For minimal FPS impact: fps_gate_mode = "fixed", fps_gate_fixed_value = 0.1  
+# For trainable gate: fps_gate_mode = "learned", fps_adapter_gate_init = 0.0
+
 # SubTask 7: Removed LayerNorm from FPS conditioning
 # (Implemented in code - simplified MLP design)
 

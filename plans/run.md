@@ -5,7 +5,7 @@ conda activate diffusion-pipe
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SUBTASKS_COMPLETE.toml' > ./output/nohup_log/fix_magnitude.out 2>&1 &
 
 
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE.toml' > ./output/nohup_log/sanity_shape.out 2>&1 &
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE.toml' > ./output/nohup_log/sanity_shape_fix_gate.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE.toml' > ./output/nohup_log/sanity_shape.out 2>&1 &
 
@@ -76,12 +76,15 @@ nohup python test_fps_multiple_experiments.py \
     --checkpoint ../checkpoints/20250906_21-53-11/epoch1000 \
     --fps_values 12 60 240 \
     --steps 50 \
-    --frames 49 \
+    --frames 9 \
     --output_dir ../output/20250906_21-53-11 \
-    --prompt "a red traingle is moving from left to right " \
+    --prompt "Image of a green square at the bottom-right (moving), a red star at the top-left (moving), a orange star at the bottom-right (moving), a blue star at the bottom-left (moving). " \
     --seed 42 \
     --port 29502 \
     --width 512 \
     --height 512 \
     --force_gate_one \
     > ../output/nohup_log/fps_comprehensive_experiment_20250906_21-53-11_gate_one.out 2>&1 &
+
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_EXTREME_TEST.toml' > ./output/nohup_log/fix_gate_test.out 2>&1 &
