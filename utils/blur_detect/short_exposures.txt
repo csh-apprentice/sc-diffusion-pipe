@@ -1,0 +1,7 @@
+/root/workspace/sc-diffusion-pipe/datatset/mirflickr/meta/exif/exif18129.txt
+/root/workspace/sc-diffusion-pipe/datatset/mirflickr/meta/exif/exif3182.txt
+/root/workspace/sc-diffusion-pipe/datatset/mirflickr/meta/exif/exif8857.txt
+/root/workspace/sc-diffusion-pipe/datatset/mirflickr/meta/exif/exif21741.txt
+/root/workspace/sc-diffusion-pipe/datatset/mirflickr/meta/exif/exif10954.txt
+/root/workspace/sc-diffusion-pipe/datatset/mirflickr/meta/exif/exif6286.txt
+/root/workspace/sc-diffusion-pipe/datatset/mirflickr/meta/exif/exif10959.txt

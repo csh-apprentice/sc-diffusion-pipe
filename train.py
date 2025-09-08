@@ -827,6 +827,17 @@ if __name__ == '__main__':
     
     if verified_adapters > 0:
         print(f"[FPS_INIT] Verified {verified_adapters} FPS adapters have correct initialization")
+    
+    # Debug RMSNorm initialization magnitudes
+    rmsnorm_count = 0
+    for name, module in model_engine.module.named_modules():
+        if 'fps_adapter' in name and hasattr(module, 'norm_k_fps'):
+            norm_weight_magnitude = module.norm_k_fps.weight.abs().mean().item()
+            print(f"[FPS_DEBUG] {name}.norm_k_fps.weight magnitude = {norm_weight_magnitude:.6f}")
+            rmsnorm_count += 1
+    
+    if rmsnorm_count > 0:
+        print(f"[FPS_DEBUG] Found {rmsnorm_count} RMSNorm layers in FPS adapters")
 
     
     if model_engine.is_pipe_parallel:

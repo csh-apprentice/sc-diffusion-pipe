@@ -42,9 +42,12 @@ def load_base_pipeline(ckpt_path, dtype=torch.bfloat16):
             "ckpt_path": ckpt_path, 
             "dtype": dtype, 
             "transformer_dtype": dtype,
-            # FPS adapter configuration to match our training
-            "fps_adapter_rank": 32,  # Match our training config
-            "fps_adapter_gate_init": 0.0,
+            # FPS adapter configuration to match training architecture
+            "fps_adapter_rank": 32,  # Match training config
+            "fps_adapter_num_tokens": 4,  # CRITICAL: Must match training (creates correct tensor shapes)
+            "fps_embed_dim": 256,  # Match training config
+            "fps_lora_alpha": 32.0,  # Match training config
+            # NOTE: NOT specifying fps_adapter_gate_init - let checkpoint override this
             "fps_condition_blocks": "deepest_third"
         }
     }
@@ -95,6 +98,38 @@ def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfl
     checkpoint_type = detect_checkpoint_type(checkpoint_path)
     logging.info(f"Detected checkpoint type: {checkpoint_type}")
     
+    # Debug: Show FPS parameter values BEFORE loading checkpoint
+    logging.info("🔍 FPS parameter values BEFORE checkpoint loading:")
+    params_before = {}
+    
+    # FPS MLP parameters
+    for name, param in wan_t2v_pipeline.transformer.named_parameters():
+        if 'fps_conditioning' in name:
+            param_mean = param.data.mean().item()
+            param_std = param.data.std().item() if param.numel() > 1 else 0.0
+            param_max = param.data.abs().max().item()
+            params_before[name] = (param_mean, param_std, param_max)
+            logging.info(f"  {name}: mean={param_mean:.6f}, std={param_std:.6f}, max={param_max:.6f}")
+    
+    # FPS Adapter parameters (sample first few)
+    adapter_count = 0
+    for name, param in wan_t2v_pipeline.transformer.named_parameters():
+        if 'fps_adapter' in name and adapter_count < 6:  # Show first 6 adapter params
+            param_mean = param.data.mean().item()
+            param_std = param.data.std().item() if param.numel() > 1 else 0.0
+            param_max = param.data.abs().max().item()
+            params_before[name] = (param_mean, param_std, param_max)
+            
+            if 'gate_alpha' in name:
+                gate_sigmoid = torch.sigmoid(param.data).item()
+                logging.info(f"  {name}: alpha={param_mean:.6f} -> gate={gate_sigmoid:.6f}")
+            else:
+                logging.info(f"  {name}: mean={param_mean:.6f}, std={param_std:.6f}, max={param_max:.6f}")
+            adapter_count += 1
+    
+    if adapter_count >= 6:
+        logging.info(f"  ... and {sum(1 for n, _ in wan_t2v_pipeline.transformer.named_parameters() if 'fps_adapter' in n) - 6} more adapter parameters")
+    
     # Configure base LoRA adapter only if needed
     if checkpoint_type in ['lora_and_fps', 'unknown']:
         adapter_config = {"type": "lora", "rank": rank, "alpha": rank, "dropout": 0.0, "dtype": dtype}
@@ -105,6 +140,55 @@ def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfl
     
     # Load weights
     wan_t2v_pipeline.load_adapter_weights(checkpoint_path)
+    
+    # Debug: Show FPS parameter values AFTER loading checkpoint
+    logging.info("✅ FPS parameter values AFTER checkpoint loading:")
+    
+    # FPS MLP parameters
+    for name, param in wan_t2v_pipeline.transformer.named_parameters():
+        if 'fps_conditioning' in name:
+            param_mean = param.data.mean().item()
+            param_std = param.data.std().item() if param.numel() > 1 else 0.0
+            param_max = param.data.abs().max().item()
+            
+            if name in params_before:
+                before_mean, before_std, before_max = params_before[name]
+                mean_changed = abs(param_mean - before_mean) > 1e-6
+                change_indicator = "📝 CHANGED" if mean_changed else "🔒 UNCHANGED"
+                logging.info(f"  {name}: mean={param_mean:.6f}, std={param_std:.6f}, max={param_max:.6f} {change_indicator}")
+                if mean_changed:
+                    logging.info(f"    Mean change: {before_mean:.6f} -> {param_mean:.6f} (Δ={param_mean-before_mean:.6f})")
+            else:
+                logging.info(f"  {name}: mean={param_mean:.6f}, std={param_std:.6f}, max={param_max:.6f} 🆕 NEW")
+    
+    # FPS Adapter parameters (sample first few)
+    adapter_count = 0
+    for name, param in wan_t2v_pipeline.transformer.named_parameters():
+        if 'fps_adapter' in name and adapter_count < 6:
+            param_mean = param.data.mean().item()
+            param_std = param.data.std().item() if param.numel() > 1 else 0.0
+            param_max = param.data.abs().max().item()
+            
+            if name in params_before:
+                before_mean, before_std, before_max = params_before[name]
+                mean_changed = abs(param_mean - before_mean) > 1e-6
+                change_indicator = "📝 CHANGED" if mean_changed else "🔒 UNCHANGED"
+                
+                if 'gate_alpha' in name:
+                    gate_sigmoid = torch.sigmoid(param.data).item()
+                    logging.info(f"  {name}: alpha={param_mean:.6f} -> gate={gate_sigmoid:.6f} {change_indicator}")
+                else:
+                    logging.info(f"  {name}: mean={param_mean:.6f}, std={param_std:.6f}, max={param_max:.6f} {change_indicator}")
+                
+                if mean_changed:
+                    logging.info(f"    Mean change: {before_mean:.6f} -> {param_mean:.6f} (Δ={param_mean-before_mean:.6f})")
+            else:
+                if 'gate_alpha' in name:
+                    gate_sigmoid = torch.sigmoid(param.data).item()
+                    logging.info(f"  {name}: alpha={param_mean:.6f} -> gate={gate_sigmoid:.6f} 🆕 NEW")
+                else:
+                    logging.info(f"  {name}: mean={param_mean:.6f}, std={param_std:.6f}, max={param_max:.6f} 🆕 NEW")
+            adapter_count += 1
     
     # Verify loaded parameters
     fps_mlp_params = 0
@@ -129,9 +213,11 @@ def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfl
     
     return wan_t2v_pipeline
 
-def generate_video_with_fps(pipeline, prompt, n_prompt, fps=60, seed=42, steps=25, scale=7.0, frames=49, size=(512, 320), shift=3.0):
+def generate_video_with_fps(pipeline, prompt, n_prompt, fps=60, seed=42, steps=25, scale=7.0, frames=49, size=(512, 320), shift=3.0, force_gate_one=False):
     """Generates a video with specific FPS conditioning."""
     logging.info(f"🎬 Generating video with FPS={fps}")
+    if force_gate_one:
+        logging.info("🔧 DIAGNOSTIC MODE: Will force gates to 1.0")
     logging.info(f"  Prompt: {prompt}")
     logging.info(f"  Steps: {steps}, Frames: {frames}, Size: {size}")
     
@@ -149,6 +235,50 @@ def generate_video_with_fps(pipeline, prompt, n_prompt, fps=60, seed=42, steps=2
     fps_values = torch.tensor([fps], dtype=torch.float32, device=device)
     logging.info(f"  FPS tensor: {fps_values.tolist()}")
     
+    # 🔍 DEBUG: Check FPS parameters before generation
+    logging.info("🔍 FPS parameter status before generation:")
+    fps_param_count = 0
+    fps_condition_count = 0
+    fps_adapter_count = 0
+    
+    for name, param in pipeline.transformer.named_parameters():
+        if 'fps_conditioning' in name:
+            fps_condition_count += 1
+            if fps_condition_count <= 2:  # Show first 2 FPS conditioning params
+                param_mean = param.data.mean().item()
+                param_max = param.data.abs().max().item()
+                logging.info(f"  {name}: mean={param_mean:.6f}, max={param_max:.6f}")
+        elif 'fps_adapter' in name:
+            fps_adapter_count += 1
+            if 'gate_alpha' in name and fps_adapter_count <= 3:  # Show first 3 gate values
+                gate_alpha = param.data.item()
+                gate_sigmoid = torch.sigmoid(param.data).item()
+                logging.info(f"  {name}: alpha={gate_alpha:.6f} -> gate={gate_sigmoid:.6f}")
+    
+    logging.info(f"  Found {fps_condition_count} FPS conditioning params, {fps_adapter_count} FPS adapter params")
+    
+    # 🔧 DIAGNOSTIC: Force all FPS adapter gates to 1.0 for maximum impact
+    if force_gate_one:
+        logging.info("🔧 DIAGNOSTIC MODE: Forcing all FPS adapter gates to 1.0 for maximum FPS impact")
+        gates_forced = 0
+        for name, param in pipeline.transformer.named_parameters():
+            if 'fps_adapter' in name and 'gate_alpha' in name:
+                # Set gate_alpha to a very large positive value to force sigmoid -> 1.0
+                # sigmoid(10) ≈ 0.99995, which is effectively 1.0
+                with torch.no_grad():
+                    param.data.fill_(10.0)
+                gates_forced += 1
+        logging.info(f"  Forced {gates_forced} gate values: gate_alpha=10.0 -> sigmoid=~1.0")
+        
+        # Verify the forced gate values
+        logging.info("  Verification - Gate values after forcing:")
+        for name, param in pipeline.transformer.named_parameters():
+            if 'fps_adapter' in name and 'gate_alpha' in name:
+                gate_alpha = param.data.item()
+                gate_sigmoid = torch.sigmoid(param.data).item()
+                logging.info(f"    {name}: alpha={gate_alpha:.1f} -> gate={gate_sigmoid:.6f}")
+                break  # Just show one example
+    
     # Initialize latents
     vae_stride = [4, 8, 8]
     target_shape = (16, frames // vae_stride[0], size[1] // vae_stride[1], size[0] // vae_stride[2])
@@ -163,7 +293,7 @@ def generate_video_with_fps(pipeline, prompt, n_prompt, fps=60, seed=42, steps=2
     timesteps = scheduler.timesteps
     
     # Denoising loop
-    for t in tqdm(timesteps, desc=f"FPS={fps}"):
+    for step_idx, t in enumerate(tqdm(timesteps, desc=f"FPS={fps}")):
         t_batch = torch.full((1,), t, device=device)
         
         with torch.no_grad(), torch.autocast('cuda'):
@@ -195,6 +325,13 @@ def generate_video_with_fps(pipeline, prompt, n_prompt, fps=60, seed=42, steps=2
             layer_outputs = initial_layer(initial_input_cond)
             x, e, e0, seq_lens, grid_sizes, freqs, context, fps_conditioning = layer_outputs
             
+            # 🔍 DEBUG: Check fps_conditioning tensor values (only for first step)
+            if step_idx == 0:
+                fps_mean = fps_conditioning.mean().item()
+                fps_std = fps_conditioning.std().item()
+                fps_max = fps_conditioning.abs().max().item()
+                logging.info(f"  [Step {step_idx}] FPS conditioning tensor: mean={fps_mean:.6f}, std={fps_std:.6f}, max={fps_max:.6f}")
+            
             for transformer_layer in transformer_layers:
                 layer_outputs = transformer_layer((x, e, e0, seq_lens, grid_sizes, freqs, context, fps_conditioning))
                 x, e, e0, seq_lens, grid_sizes, freqs, context, fps_conditioning = layer_outputs
@@ -209,6 +346,16 @@ def generate_video_with_fps(pipeline, prompt, n_prompt, fps=60, seed=42, steps=2
     # Decode to video
     logging.info("Decoding latents...")
     video_tensor = pipeline.vae.decode([latents])[0]
+    
+    # 🔍 DEBUG: Final verification of FPS parameters after generation
+    logging.info("🔍 FPS parameter status after generation:")
+    for name, param in pipeline.transformer.named_parameters():
+        if 'fps_conditioning' in name and 'lin1.weight' in name:  # Check one representative param
+            param_mean = param.data.mean().item()
+            param_max = param.data.abs().max().item()
+            logging.info(f"  {name}: mean={param_mean:.6f}, max={param_max:.6f}")
+            break
+    
     logging.info(f"✅ Generation complete for FPS={fps}")
     
     return video_tensor
@@ -229,7 +376,7 @@ def save_video_result(tensor, fps, prompt_short, output_dir, size):
     
     return filepath
 
-def run_fps_experiments(pipeline, base_prompt, n_prompt, fps_values, output_dir, **generation_kwargs):
+def run_fps_experiments(pipeline, base_prompt, n_prompt, fps_values, output_dir, force_gate_one=False, **generation_kwargs):
     """Runs multiple FPS conditioning experiments."""
     logging.info("🧪 Starting FPS conditioning experiments...")
     logging.info(f"  FPS values to test: {fps_values}")
@@ -249,6 +396,7 @@ def run_fps_experiments(pipeline, base_prompt, n_prompt, fps_values, output_dir,
                 prompt=base_prompt,
                 n_prompt=n_prompt,
                 fps=fps,
+                force_gate_one=force_gate_one,
                 **generation_kwargs
             )
             
@@ -316,6 +464,7 @@ def main():
     parser.add_argument('--width', type=int, default=832, help='Video width (default: 832)')
     parser.add_argument('--height', type=int, default=480, help='Video height (default: 480)')
     parser.add_argument('--scale', type=float, default=6.0, help='CFG scale (default: 6.0)')
+    parser.add_argument('--force_gate_one', action='store_true', help='🔧 DIAGNOSTIC: Force all FPS adapter gates to 1.0 for maximum FPS impact')
     
     args = parser.parse_args()
     
@@ -335,7 +484,8 @@ def main():
         results = run_fps_experiments(
             pipeline=pipeline,
             base_prompt=args.prompt,
-            n_prompt="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+            #n_prompt="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+            n_prompt="",  # Empty negative prompt to match training conditions (no negative prompts used in training)
             fps_values=args.fps_values,
             output_dir=args.output_dir,
             seed=args.seed,
@@ -343,7 +493,8 @@ def main():
             frames=args.frames,
             size=(args.width, args.height),  # Use configurable resolution
             scale=args.scale,                # Use configurable CFG scale
-            shift=3.0
+            shift=3.0,
+            force_gate_one=args.force_gate_one  # 🔧 DIAGNOSTIC: Force gates to 1.0 for max FPS impact
         )
         
         logging.info(f"\n🎉 All experiments complete! Results saved to: {args.output_dir}")

@@ -351,6 +351,10 @@ class FPSCrossAttentionAdapter(nn.Module):
         self.v_fps_down = nn.Linear(fps_conditioning_dim, rank, bias=False)
         self.v_fps_up = nn.Linear(rank, num_tokens * dim, bias=False)
         
+        # RMSNorm for K matrix to match text K normalization scale
+        # This ensures K_fps and K_text are on the same scale before attention
+        self.norm_k_fps = WanRMSNorm(dim, eps=1e-6)
+        
         # Learnable gate - always computed for checkpoint consistency
         self.gate_init = gate_init  # Store original value for re-initialization
         self.gate_alpha = nn.Parameter(torch.tensor(gate_init))
@@ -379,6 +383,10 @@ class FPSCrossAttentionAdapter(nn.Module):
         # create a dead branch with no gradients. Use very small random init.
         nn.init.normal_(self.k_fps_up.weight, std=1e-4)  # Very small to minimize initial impact
         nn.init.normal_(self.v_fps_up.weight, std=1e-4)  # But non-zero to allow gradients
+        
+        # Ensure RMSNorm weights are properly initialized to ones (should be default but verify)
+        with torch.no_grad():
+            self.norm_k_fps.weight.fill_(1.0)
         
         # Re-initialize gate_alpha to configured value (fixes DeepSpeed override)
         # Note: self.gate_init stores the original configured value
@@ -437,23 +445,44 @@ class FPSCrossAttentionAdapter(nn.Module):
         # ALWAYS compute text cross-attention: Attn(Q, K_text, V_text)
         y_text = flash_attention(q, k_text, v_text, k_lens=context_lens)
         
-        # ALWAYS apply LoRA projections (deterministic operations)
-        # fps_conditioning is ALWAYS a valid tensor (never None)
-        k_fps_proj = self.k_fps_up(self.k_fps_down(fps_conditioning))  # [B, num_tokens * dim]
-        v_fps_proj = self.v_fps_up(self.v_fps_down(fps_conditioning))  # [B, num_tokens * dim]
-        
-        # Apply LoRA scaling
+        # 1) project
+        k_fps_proj = self.k_fps_up(self.k_fps_down(fps_conditioning))  # [B, nt*dim]
+        v_fps_proj = self.v_fps_up(self.v_fps_down(fps_conditioning))  # [B, nt*dim]
+
+        # 2) normalize K' in full dim (match base K scale)
+        B = q.size(0)
+        k_fps_proj = k_fps_proj.view(B * self.num_tokens, self.dim)
+        k_fps_proj = self.norm_k_fps(k_fps_proj)                       # RMSNorm (trainable scale)
+        k_fps_proj = k_fps_proj.view(B, self.num_tokens * self.dim)
+
+        # 3) apply LoRA scale AFTER norm so it actually changes amplitude
         k_fps_proj = k_fps_proj * self.lora_scale
         v_fps_proj = v_fps_proj * self.lora_scale
-        
-        
-        # ALWAYS reshape for attention (deterministic shapes)
-        batch_size = q.size(0)
-        k_fps = k_fps_proj.view(batch_size, self.num_tokens, self.num_heads, self.head_dim)
-        v_fps = v_fps_proj.view(batch_size, self.num_tokens, self.num_heads, self.head_dim)
+
+        # 4) reshape to attention layout
+        k_fps = k_fps_proj.view(B, self.num_tokens, self.num_heads, self.head_dim)
+        v_fps = v_fps_proj.view(B, self.num_tokens, self.num_heads, self.head_dim)
         
         # ALWAYS compute FPS attention (deterministic operation)
         y_fps = flash_attention(q, k_fps, v_fps, k_lens=None)
+        
+        # Debug: Print y_fps/y_text magnitude ratio every 1000 forward passes (less spam)
+        # Debug: Track FPS vs text ratio (detached from gradient computation)
+        if hasattr(self, 'debug_counter'):
+            self.debug_counter += 1
+            if self.debug_counter % 100 == 0:  # Every 100 forward passes
+                with torch.no_grad():  # Completely detached from gradient computation
+                    # Create detached copies to avoid gradient issues
+                    y_text_detached = y_text.detach()
+                    y_fps_detached = y_fps.detach()
+                    gate_alpha_detached = self.gate_alpha.detach()
+                    
+                    y_text_norm = torch.norm(y_text_detached).item()
+                    y_fps_norm = torch.norm(y_fps_detached).item()
+                    ratio = y_fps_norm / (y_text_norm + 1e-8)  # Avoid division by zero
+                    gate_val = torch.sigmoid(gate_alpha_detached).item()
+                    
+                    print(f"[FPS_RATIO] Forward {self.debug_counter}: ||y_fps||/||y_text|| = {ratio:.6f}, gate = {gate_val:.4f}")
         
         # ALWAYS compute gated combination (deterministic operation)
         gate = torch.sigmoid(self.gate_alpha)

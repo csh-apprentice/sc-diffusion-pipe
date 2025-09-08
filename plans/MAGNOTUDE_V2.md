@@ -1,0 +1,3 @@
+Our params moving is still slow in my opniion, after reviewing the code, I conclude following subtasks to do:
+## SubTask1: Apply RMSNorm on our FPS K matrix
+Compare the text prompts: WanCrossAttention class and our FPSCrossAttentionAdapter.forward, There’s no RMSNorm applied to k_fps_proj, So K′ is on a different scale than the RMS-normalized text K., to align, we should apply that to our K matrix on the fps side too.

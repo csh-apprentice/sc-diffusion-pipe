@@ -280,6 +280,7 @@ def test_fps_conditioning():
     base_prompt = "A beautiful sunset over calm ocean waves"
     n_prompt = "blurry, low quality, distorted"
     
+    
     results = []
     
     for fps in test_fps_values:
