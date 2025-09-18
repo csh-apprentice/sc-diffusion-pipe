@@ -2,10 +2,12 @@ Training Command:
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate diffusion-pipe
 
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SUBTASKS_COMPLETE.toml' > ./output/nohup_log/fix_magnitude.out 2>&1 &
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_IMG.toml' > ./output/nohup_log/sanity_shape_single_image_joint.out 2>&1 &
 
 
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE.toml' > ./output/nohup_log/sanity_shape_fix_gate.out 2>&1 &
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_IMG.toml' > ./output/nohup_log/sanity_shape_single_image.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BOTH_IMG.toml' > ./output/nohup_log/sanity_shape_both_image.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE.toml' > ./output/nohup_log/sanity_shape.out 2>&1 &
 
@@ -52,12 +54,18 @@ python collect_exposure_times.py /root/workspace/sc-diffusion-pipe/datatset/mirf
 python collect_exposure_times.py /root/workspace/sc-diffusion-pipe/datatset/mirflickr/meta/exif --recursive --filter 0.082 0.084 --out-list short_exposures.txt --log-bins
 
 python generate_synthetic_blur_dataset.py \
-  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes \
-  --modes image \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes_both \
+  --modes both \
   --samples_per_fps 60 \
-  --min_speed 200 \
-  --max_speed 200 \
+  --align_img_video \
+  --min_speed 100 \
+  --max_speed 400 \
+  --min_obj 1 \
+  --max_objs 2 \
+  --seed 91 \
+  --ensure_static_video \
   --caption_relations 
+
 
 
 
@@ -71,20 +79,45 @@ python generate_synthetic_blur_dataset.py \
   --relations basic \
   --caption_blur_text none
 
-nohup python test_fps_multiple_experiments.py \
-    --base_model /root/workspace/diffusion-pipe/cindy_ckpts/Wan2.1-T2V-14B \
-    --checkpoint ../checkpoints/20250906_21-53-11/epoch1000 \
+nohup python test_fps_multiple_experiments_align.py \
+    --config /root/workspace/sc-diffusion-pipe/checkpoints/20250914_06-42-00/wan_SC_TARGET_14B_FPS_SHAPE_BOTH_VID.toml \
+    --checkpoint ../checkpoints/20250914_06-42-00/epoch250 \
     --fps_values 12 60 240 \
     --steps 50 \
-    --frames 9 \
-    --output_dir ../output/20250906_21-53-11 \
-    --prompt "Image of a green square at the bottom-right (moving), a red star at the top-left (moving), a orange star at the bottom-right (moving), a blue star at the bottom-left (moving). " \
+    --frames 49 \
+    --output_dir ../output/20250914_06-42-00_epoch250_fix \
+    --prompt "Video of a orange square at the top-right (moving), a purple star at the top-right (static).   " \
+    --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
     --seed 42 \
     --port 29502 \
     --width 512 \
     --height 512 \
-    --force_gate_one \
-    > ../output/nohup_log/fps_comprehensive_experiment_20250906_21-53-11_gate_one.out 2>&1 &
+    > ../output/nohup_log/fps_comprehensive_experiment_20250914_06-42-00_epoch250_neg.out 2>&1 &
+
+nohup python test_fps_multiple_experiments_align.py \
+    --config ../MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE.toml \
+    --checkpoint ../checkpoints/20250909_20-49-48/epoch1000 \
+    --fps_values 12 60 240 \
+    --steps 50 \
+    --frames 49 \
+    --output_dir ../output/20250909_20-49-48_epoch1000_fix_neg \
+    --prompt "A man running on a beach." \
+    --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
+    --seed 42 \
+    --port 29502 \
+    --width 512 \
+    --height 512 \
+    > ../output/nohup_log/fps_comprehensive_experiment_20250909_20-49-48_epoch1000_fix_neg_run.out 2>&1 &
 
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_EXTREME_TEST.toml' > ./output/nohup_log/fix_gate_test.out 2>&1 &
+
+
+tensorboard --logdir /root/workspace/sc-diffusion-pipe/checkpoints \
+  --host 0.0.0.0 \
+  --port 7007 \
+  --load_fast=false
+
+
+
+ssh -L 7007:127.0.0.1:7007 shihanc-shuttercontrol.workbench.prod.netflix.net

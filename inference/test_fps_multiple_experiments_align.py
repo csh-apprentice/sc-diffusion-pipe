@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Multi-experiment FPS conditioning test script.
+Multi-experiment FPS conditioning test script - TOML-aligned version.
 Tests different FPS values to verify FPS conditioning works correctly.
+Uses TOML configuration files for proper training/inference alignment.
 """
 
 import torch
@@ -13,6 +14,8 @@ import deepspeed
 from tqdm import tqdm
 import math
 import argparse
+import toml
+import json
 
 # Add the project root to Python path
 sys.path.insert(0, '/root/workspace/sc-diffusion-pipe')
@@ -21,6 +24,7 @@ from models.wan.wan import WanPipeline
 import peft
 from inference_utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 from inference_utils.utils import cache_video
+from utils.common import DTYPE_MAP
 
 def setup_environment(port='29501'):
     """Initializes the DeepSpeed distributed environment for standalone use."""
@@ -34,24 +38,50 @@ def setup_environment(port='29501'):
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
     logging.info(f"DeepSpeed environment initialized on port {port}.")
 
-def load_base_pipeline(ckpt_path, dtype=torch.bfloat16):
-    """Loads the base WanPipeline with FPS conditioning support."""
-    logging.info("Initializing WanPipeline with FPS conditioning support...")
-    pipeline_config = {
-        "model": {
-            "ckpt_path": ckpt_path, 
-            "dtype": dtype, 
-            "transformer_dtype": dtype,
-            # FPS adapter configuration to match training architecture
-            "fps_adapter_rank": 32,  # Match training config
-            "fps_adapter_num_tokens": 4,  # CRITICAL: Must match training (creates correct tensor shapes)
-            "fps_embed_dim": 256,  # Match training config
-            "fps_lora_alpha": 32.0,  # Match training config
-            # NOTE: NOT specifying fps_adapter_gate_init - let checkpoint override this
-            "fps_condition_blocks": "deepest_third"
-        }
+def load_pipeline_from_toml(toml_path):
+    """Loads WanPipeline using TOML configuration (training-aligned)."""
+    logging.info(f"Loading TOML configuration: {toml_path}")
+    
+    # Load TOML exactly like train.py does
+    with open(toml_path) as f:
+        config = json.loads(json.dumps(toml.load(f)))
+    
+    # Convert dtype strings to torch.dtype objects (like train.py does)
+    model_dtype_str = config['model']['dtype']
+    config['model']['dtype'] = DTYPE_MAP[model_dtype_str]
+    if transformer_dtype := config['model'].get('transformer_dtype', None):
+        config['model']['transformer_dtype'] = DTYPE_MAP.get(transformer_dtype, transformer_dtype)
+    
+    logging.info("Initializing WanPipeline with TOML configuration...")
+    logging.info(f"Model type: {config['model']['type']}")
+    logging.info(f"Model checkpoint: {config['model']['ckpt_path']}")
+    logging.info(f"Model dtype: {model_dtype_str} -> {config['model']['dtype']}")
+    
+    # Log ALL FPS configuration from TOML (must match wan.py exactly)
+    model_config = config['model']
+    fps_settings = {
+        'fps_adapter_rank': model_config.get('fps_adapter_rank'),
+        'fps_adapter_gate_init': model_config.get('fps_adapter_gate_init'),
+        'fps_condition_blocks': model_config.get('fps_condition_blocks'),
+        'fps_adapter_num_tokens': model_config.get('fps_adapter_num_tokens'),
+        'fps_tau_transform': model_config.get('fps_tau_transform'),
+        'fps_tau_scale': model_config.get('fps_tau_scale'),
+        'fps_embed_dim': model_config.get('fps_embed_dim'),
+        'fps_condition_hidden': model_config.get('fps_condition_hidden'),
+        'fps_lora_alpha': model_config.get('fps_lora_alpha'),
+        'fps_gate_mode': model_config.get('fps_gate_mode'),
+        'fps_gate_fixed_value': model_config.get('fps_gate_fixed_value')
     }
-    wan_t2v = WanPipeline(config=pipeline_config)
+    logging.info("Complete FPS configuration from TOML (aligned with wan.py):")
+    for key, value in fps_settings.items():
+        if value is not None:
+            logging.info(f"  {key}: {value}")
+        else:
+            # Show which settings are missing and will use defaults
+            logging.info(f"  {key}: <not set, will use wan.py default>")
+    
+    # Initialize pipeline using TOML config (same as train.py)
+    wan_t2v = WanPipeline(config)
     
     logging.info("Loading main transformer model...")
     wan_t2v.load_diffusion_model()
@@ -61,9 +91,16 @@ def load_base_pipeline(ckpt_path, dtype=torch.bfloat16):
     
     wan_t2v.transformer.to(device)
     wan_t2v.vae.model.to(device)
+    wan_t2v.text_encoder.model.to(device)
     
-    logging.info("Pipeline loaded successfully.")
-    return wan_t2v
+    # SUBTASK 3: Set models to eval mode for sampling (critical for proper inference)
+    logging.info("Setting models to eval mode for inference...")
+    wan_t2v.transformer.eval()
+    wan_t2v.vae.model.eval()
+    wan_t2v.text_encoder.model.eval()
+    
+    logging.info("Pipeline loaded successfully with TOML configuration.")
+    return wan_t2v, config
 
 def detect_checkpoint_type(lora_path):
     """Detects FPS-only vs mixed checkpoint type."""
@@ -227,7 +264,7 @@ def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfl
     
     return wan_t2v_pipeline
 
-def generate_video_with_fps(pipeline, prompt, n_prompt, fps=60, seed=42, steps=25, scale=7.0, frames=49, size=(512, 320), shift=3.0, force_gate_one=False):
+def generate_video_with_fps(pipeline, config, prompt, n_prompt, fps=60, seed=42, steps=25, scale=7.0, frames=49, size=(512, 320), shift=3.0, force_gate_one=False):
     """Generates a video with specific FPS conditioning."""
     logging.info(f"🎬 Generating video with FPS={fps}")
     if force_gate_one:
@@ -337,7 +374,10 @@ def generate_video_with_fps(pipeline, prompt, n_prompt, fps=60, seed=42, steps=2
     for step_idx, t in enumerate(tqdm(timesteps, desc=f"FPS={fps}")):
         t_batch = torch.full((1,), t, device=device)
         
-        with torch.no_grad(), torch.autocast('cuda'):
+        # SUBTASK 4: Fix autocast dtype to match training dtype (already converted to torch.dtype)
+        autocast_dtype = config['model']['dtype']  # Already converted by DTYPE_MAP
+        
+        with torch.no_grad(), torch.autocast('cuda', dtype=autocast_dtype):
             # Unconditional pass
             initial_input_uncond = (
                 latents.unsqueeze(0), None, t_batch, 
@@ -417,7 +457,7 @@ def save_video_result(tensor, fps, prompt_short, output_dir, size):
     
     return filepath
 
-def run_fps_experiments(pipeline, base_prompt, n_prompt, fps_values, output_dir, force_gate_one=False, **generation_kwargs):
+def run_fps_experiments(pipeline, config, base_prompt, n_prompt, fps_values, output_dir, force_gate_one=False, **generation_kwargs):
     """Runs multiple FPS conditioning experiments."""
     logging.info("🧪 Starting FPS conditioning experiments...")
     logging.info(f"  FPS values to test: {fps_values}")
@@ -434,6 +474,7 @@ def run_fps_experiments(pipeline, base_prompt, n_prompt, fps_values, output_dir,
             # Generate video
             video_tensor = generate_video_with_fps(
                 pipeline=pipeline,
+                config=config,  # Pass config for proper dtype handling
                 prompt=base_prompt,
                 n_prompt=n_prompt,
                 fps=fps,
@@ -492,19 +533,20 @@ def run_fps_experiments(pipeline, base_prompt, n_prompt, fps_values, output_dir,
     return results
 
 def main():
-    parser = argparse.ArgumentParser(description='Multi-FPS experiment script')
-    parser.add_argument('--base_model', required=True, help='Path to base model')
+    parser = argparse.ArgumentParser(description='Multi-FPS experiment script - TOML-aligned')
+    parser.add_argument('--config', required=True, help='Path to TOML configuration file')
     parser.add_argument('--checkpoint', required=True, help='Path to FPS checkpoint')
-    parser.add_argument('--output_dir', default='./fps_experiments', help='Output directory')
+    parser.add_argument('--output_dir', default='./fps_experiments_align', help='Output directory')
     parser.add_argument('--fps_values', nargs='+', type=int, default=[12, 24, 60], help='FPS values to test')
     parser.add_argument('--prompt', default='A cat walking through a beautiful garden', help='Generation prompt')
+    parser.add_argument('--negative_prompt', default='', help='Negative prompt (optional)')
     parser.add_argument('--steps', type=int, default=15, help='Denoising steps')
     parser.add_argument('--frames', type=int, default=33, help='Number of frames')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--port', default='29501', help='DeepSpeed port')
-    parser.add_argument('--width', type=int, default=832, help='Video width (default: 832)')
-    parser.add_argument('--height', type=int, default=480, help='Video height (default: 480)')
-    parser.add_argument('--scale', type=float, default=6.0, help='CFG scale (default: 6.0)')
+    parser.add_argument('--width', type=int, help='Video width (overrides TOML if specified)')
+    parser.add_argument('--height', type=int, help='Video height (overrides TOML if specified)')
+    parser.add_argument('--scale', type=float, help='CFG scale (overrides TOML if specified)')
     parser.add_argument('--force_gate_one', action='store_true', help='🔧 DIAGNOSTIC: Force all FPS adapter gates to 1.0 for maximum FPS impact')
     
     args = parser.parse_args()
@@ -513,29 +555,45 @@ def main():
         # Setup
         setup_environment(args.port)
         
-        # Load pipeline
-        logging.info("Loading base pipeline...")
-        pipeline = load_base_pipeline(args.base_model)
+        # Load pipeline using TOML configuration
+        logging.info("Loading pipeline from TOML configuration...")
+        pipeline, config = load_pipeline_from_toml(args.config)
         
         # Apply checkpoint
         logging.info("Applying checkpoint...")
-        pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=32)
+        # Get rank from TOML config or default
+        fps_rank = config['model'].get('fps_adapter_rank', 32)
+        pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=fps_rank)
+        
+        # SUBTASK 2: Use TOML parameters for inference settings (with CLI overrides)
+        # Extract inference parameters from TOML config or use defaults
+        width = args.width if args.width is not None else 832
+        height = args.height if args.height is not None else 480
+        scale = args.scale if args.scale is not None else 6.0
+        
+        logging.info("Inference parameters:")
+        logging.info(f"  Resolution: {width}x{height}")
+        logging.info(f"  CFG scale: {scale}")
+        logging.info(f"  Steps: {args.steps}")
+        logging.info(f"  Frames: {args.frames}")
+        logging.info(f"  Prompt: '{args.prompt}'")
+        logging.info(f"  Negative prompt: '{args.negative_prompt}'")
         
         # Run experiments
         results = run_fps_experiments(
             pipeline=pipeline,
+            config=config,  # Pass TOML config for proper dtype handling
             base_prompt=args.prompt,
-            #n_prompt="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
-            n_prompt="",  # Empty negative prompt to match training conditions (no negative prompts used in training)
+            n_prompt=args.negative_prompt,  # Use provided negative prompt or empty string
             fps_values=args.fps_values,
             output_dir=args.output_dir,
             seed=args.seed,
             steps=args.steps,
             frames=args.frames,
-            size=(args.width, args.height),  # Use configurable resolution
-            scale=args.scale,                # Use configurable CFG scale
+            size=(width, height),
+            scale=scale,
             shift=3.0,
-            force_gate_one=args.force_gate_one  # 🔧 DIAGNOSTIC: Force gates to 1.0 for max FPS impact
+            force_gate_one=args.force_gate_one
         )
         
         logging.info(f"\n🎉 All experiments complete! Results saved to: {args.output_dir}")
