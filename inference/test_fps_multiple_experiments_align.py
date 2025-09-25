@@ -128,12 +128,152 @@ def detect_checkpoint_type(lora_path):
         logging.warning(f"Could not detect checkpoint type: {e}")
         return 'unknown'
 
-def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfloat16):
+def load_adapter_weights_selective(pipeline, checkpoint_path, fps_only=False, base_only=False):
+    """Load adapter weights with selective parameter filtering using temporary files."""
+    if not fps_only and not base_only:
+        # Normal mode - use original loading method
+        logging.info(f"📦 NORMAL MODE: Loading all parameters")
+        pipeline.load_adapter_weights(checkpoint_path)
+        return
+    
+    import safetensors
+    import tempfile
+    from pathlib import Path
+    
+    # Use the same checkpoint detection logic as the original WAN pipeline
+    checkpoint_dir = Path(checkpoint_path)
+    if checkpoint_dir.is_dir():
+        # Look for .safetensors files in the directory
+        safetensors_files = list(checkpoint_dir.glob('*.safetensors'))
+        if not safetensors_files:
+            raise FileNotFoundError(f"No .safetensors files found in {checkpoint_dir}")
+        checkpoint_file = safetensors_files[0]  # Use the first one found
+        logging.info(f"Found checkpoint file: {checkpoint_file}")
+    else:
+        checkpoint_file = checkpoint_dir
+    
+    # Load the original checkpoint
+    logging.info(f"Loading checkpoint: {checkpoint_file}")
+    checkpoint = safetensors.torch.load_file(str(checkpoint_file))
+    
+    # Filter parameters based on mode
+    if fps_only:
+        # Only keep FPS-related parameters
+        filtered_checkpoint = {k: v for k, v in checkpoint.items() 
+                             if 'fps_conditioning' in k or 'fps_adapter' in k}
+        mode_name = "FPS-ONLY"
+        logging.info(f"🎯 {mode_name} MODE: Filtered {len(filtered_checkpoint)} FPS parameters out of {len(checkpoint)} total")
+        
+    elif base_only:
+        # Only keep base LoRA parameters (exclude FPS parameters)
+        filtered_checkpoint = {k: v for k, v in checkpoint.items() 
+                             if 'fps_conditioning' not in k and 'fps_adapter' not in k}
+        mode_name = "BASE-ONLY"
+        logging.info(f"🎯 {mode_name} MODE: Filtered {len(filtered_checkpoint)} base LoRA parameters out of {len(checkpoint)} total")
+    
+    # Show detailed breakdown of what's being loaded/skipped
+    fps_conditioning_params = [k for k in checkpoint.keys() if 'fps_conditioning' in k]
+    fps_adapter_params = [k for k in checkpoint.keys() if 'fps_adapter' in k]
+    base_lora_params = [k for k in checkpoint.keys() if 'fps_conditioning' not in k and 'fps_adapter' not in k]
+    
+    logging.info(f"📊 Parameter breakdown in original checkpoint:")
+    logging.info(f"  FPS conditioning (MLP): {len(fps_conditioning_params)} parameters")
+    logging.info(f"  FPS adapters (LoRA): {len(fps_adapter_params)} parameters") 
+    logging.info(f"  Base LoRA: {len(base_lora_params)} parameters")
+    logging.info(f"  Total: {len(checkpoint)} parameters")
+    
+    if fps_only:
+        logging.info(f"🎯 FPS-ONLY filtering results:")
+        logging.info(f"  ✅ Loading FPS conditioning: {len(fps_conditioning_params)} parameters")
+        logging.info(f"  ✅ Loading FPS adapters: {len(fps_adapter_params)} parameters")
+        logging.info(f"  ❌ Skipping base LoRA: {len(base_lora_params)} parameters")
+        
+        # Show examples of each type
+        if fps_conditioning_params:
+            logging.info(f"  📝 Example FPS conditioning params: {fps_conditioning_params[:2]}")
+        if fps_adapter_params:
+            logging.info(f"  📝 Example FPS adapter params: {fps_adapter_params[:2]}")
+            
+    elif base_only:
+        logging.info(f"🎯 BASE-ONLY filtering results:")
+        logging.info(f"  ✅ Loading base LoRA: {len(base_lora_params)} parameters") 
+        logging.info(f"  ❌ Skipping FPS conditioning: {len(fps_conditioning_params)} parameters")
+        logging.info(f"  ❌ Skipping FPS adapters: {len(fps_adapter_params)} parameters")
+        
+        # Show examples of base LoRA params
+        if base_lora_params:
+            logging.info(f"  📝 Example base LoRA params: {base_lora_params[:3]}")
+    
+    # Create temporary directory and filtered safetensors file
+    temp_dir = tempfile.mkdtemp(prefix=f"selective_loading_{mode_name.lower()}_")
+    temp_checkpoint_file = Path(temp_dir) / "filtered_adapter.safetensors"
+    
+    logging.info(f"Creating temporary filtered checkpoint: {temp_checkpoint_file}")
+    safetensors.torch.save_file(filtered_checkpoint, str(temp_checkpoint_file))
+    
+    # Use the original load_adapter_weights method with the filtered temporary file
+    try:
+        pipeline.load_adapter_weights(temp_dir)
+        logging.info(f"✅ Successfully loaded {len(filtered_checkpoint)} filtered parameters using temporary file")
+    finally:
+        # Clean up temporary files
+        import shutil
+        shutil.rmtree(temp_dir)
+        logging.info(f"🧹 Cleaned up temporary directory: {temp_dir}")
+
+def verify_fps_config_applied(pipeline, config):
+    """Verify that FPS configuration from TOML was properly applied to the model."""
+    model_config = config['model']
+    logging.info("🔍 Verifying FPS configuration from TOML was applied correctly:")
+    
+    # Check FPS adapters exist in the model
+    fps_adapter_count = sum(1 for n, _ in pipeline.transformer.named_parameters() if 'fps_adapter' in n)
+    fps_conditioning_count = sum(1 for n, _ in pipeline.transformer.named_parameters() if 'fps_conditioning' in n)
+    
+    logging.info(f"  Found {fps_adapter_count} FPS adapter parameters in model")
+    logging.info(f"  Found {fps_conditioning_count} FPS conditioning (MLP) parameters in model")
+    
+    # Check if the expected FPS settings were used
+    expected_settings = {
+        'fps_adapter_rank': model_config.get('fps_adapter_rank', 'default'),
+        'fps_condition_blocks': model_config.get('fps_condition_blocks', 'default'),
+        'fps_gate_mode': model_config.get('fps_gate_mode', 'default'),
+        'fps_gate_fixed_value': model_config.get('fps_gate_fixed_value', 'default'),
+        'fps_adapter_num_tokens': model_config.get('fps_adapter_num_tokens', 'default'),
+        'fps_embed_dim': model_config.get('fps_embed_dim', 'default')
+    }
+    
+    logging.info("  Expected FPS configuration from TOML:")
+    for key, value in expected_settings.items():
+        logging.info(f"    {key}: {value}")
+    
+    # Check gate mode by looking at buffer vs parameter names
+    has_gate_alpha = any('gate_alpha' in n for n, _ in pipeline.transformer.named_parameters())
+    has_gate_fixed = any('gate_fixed' in n for n, _ in pipeline.transformer.named_buffers())
+    
+    if has_gate_alpha and not has_gate_fixed:
+        detected_mode = "learned"
+    elif has_gate_fixed and not has_gate_alpha:
+        detected_mode = "fixed"
+    elif has_gate_alpha and has_gate_fixed:
+        detected_mode = "mixed (both found)"
+    else:
+        detected_mode = "unknown"
+    
+    expected_mode = model_config.get('fps_gate_mode', 'learned')
+    mode_match = "✅" if detected_mode == expected_mode else "⚠️"
+    logging.info(f"  Gate mode check: Expected='{expected_mode}', Detected='{detected_mode}' {mode_match}")
+
+def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfloat16, fps_only=False, base_only=False, config=None):
     """Applies checkpoint weights (FPS-only or mixed LoRA+FPS)."""
     logging.info(f"Loading checkpoint: {checkpoint_path}")
     
     checkpoint_type = detect_checkpoint_type(checkpoint_path)
     logging.info(f"Detected checkpoint type: {checkpoint_type}")
+    
+    # Verify FPS configuration for fps_only mode
+    if fps_only and config:
+        verify_fps_config_applied(wan_t2v_pipeline, config)
     
     # Debug: Show FPS parameter values BEFORE loading checkpoint
     logging.info("🔍 FPS parameter values BEFORE checkpoint loading:")
@@ -174,16 +314,31 @@ def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfl
     if adapter_count >= 6:
         logging.info(f"  ... and {sum(1 for n, _ in wan_t2v_pipeline.transformer.named_parameters() if 'fps_adapter' in n) - 6} more adapter parameters")
     
-    # Configure base LoRA adapter only if needed
-    if checkpoint_type in ['lora_and_fps', 'unknown']:
+    # Configure base LoRA adapter based on selective loading mode
+    configure_base_lora = False
+    
+    if fps_only:
+        logging.info("🎯 FPS-ONLY MODE: Skipping base LoRA configuration")
+        logging.info("   ✅ FPS adapters were already configured from TOML during pipeline initialization")
+        logging.info("   ✅ FPS configuration from TOML will be used (rank, gate_mode, etc.)")
+        configure_base_lora = False
+    elif base_only:
+        logging.info("🎯 BASE-ONLY MODE: Configuring only base LoRA adapter")
+        configure_base_lora = True
+    else:
+        # Normal mode - configure based on checkpoint type
+        if checkpoint_type in ['lora_and_fps', 'unknown']:
+            configure_base_lora = True
+        elif checkpoint_type == 'fps_only':
+            configure_base_lora = False
+    
+    if configure_base_lora:
         adapter_config = {"type": "lora", "rank": rank, "alpha": rank, "dropout": 0.0, "dtype": dtype}
         wan_t2v_pipeline.configure_adapter(adapter_config)
         logging.info(f"Configured base LoRA adapter with rank {rank}")
-    elif checkpoint_type == 'fps_only':
-        logging.info("FPS-only checkpoint - skipping base LoRA configuration")
     
-    # Load weights
-    wan_t2v_pipeline.load_adapter_weights(checkpoint_path)
+    # Load weights with selective parameter filtering
+    load_adapter_weights_selective(wan_t2v_pipeline, checkpoint_path, fps_only, base_only)
     
     # Debug: Show FPS parameter values AFTER loading checkpoint
     logging.info("✅ FPS parameter values AFTER checkpoint loading:")
@@ -532,6 +687,51 @@ def run_fps_experiments(pipeline, config, base_prompt, n_prompt, fps_values, out
     
     return results
 
+def validate_fps_config(config):
+    """Validates that the config has FPS parameter definitions for selective loading."""
+    model_config = config.get('model', {})
+    
+    # Check for required FPS parameters
+    fps_params = [
+        'fps_adapter_rank', 'fps_adapter_num_tokens', 'fps_embed_dim', 
+        'fps_lora_alpha', 'fps_condition_blocks'
+    ]
+    
+    missing_params = [param for param in fps_params if param not in model_config]
+    if missing_params:
+        raise ValueError(
+            f"--fps_only requires FPS parameters in config, but missing: {missing_params}. "
+            f"Cannot load FPS-only parameters from checkpoint."
+        )
+    
+    logging.info("✅ Config validation passed: FPS parameters found in configuration")
+
+def validate_base_lora_config(config):
+    """Validates that the config has base LoRA parameter definitions for selective loading."""
+    if 'adapter' not in config:
+        raise ValueError(
+            "--base_only requires [adapter] section in config, but it's missing. "
+            "Cannot load base LoRA parameters from checkpoint."
+        )
+    
+    adapter_config = config['adapter']
+    required_params = ['type', 'rank']
+    missing_params = [param for param in required_params if param not in adapter_config]
+    
+    if missing_params:
+        raise ValueError(
+            f"--base_only requires adapter parameters in config, but missing: {missing_params}. "
+            f"Cannot load base LoRA parameters from checkpoint."
+        )
+    
+    if adapter_config['type'] != 'lora':
+        raise ValueError(
+            f"--base_only requires adapter type 'lora', but found '{adapter_config['type']}'. "
+            f"Cannot load base LoRA parameters from checkpoint."
+        )
+    
+    logging.info("✅ Config validation passed: Base LoRA parameters found in configuration")
+
 def main():
     parser = argparse.ArgumentParser(description='Multi-FPS experiment script - TOML-aligned')
     parser.add_argument('--config', required=True, help='Path to TOML configuration file')
@@ -548,8 +748,14 @@ def main():
     parser.add_argument('--height', type=int, help='Video height (overrides TOML if specified)')
     parser.add_argument('--scale', type=float, help='CFG scale (overrides TOML if specified)')
     parser.add_argument('--force_gate_one', action='store_true', help='🔧 DIAGNOSTIC: Force all FPS adapter gates to 1.0 for maximum FPS impact')
+    parser.add_argument('--fps_only', action='store_true', help='Load only FPS-related parameters from checkpoint (ignore base LoRA)')
+    parser.add_argument('--base_only', action='store_true', help='Load only base LoRA parameters from checkpoint (ignore FPS parameters)')
     
     args = parser.parse_args()
+    
+    # Validate selective loading arguments
+    if args.fps_only and args.base_only:
+        parser.error("--fps_only and --base_only are mutually exclusive. Choose one or neither.")
     
     try:
         # Setup
@@ -559,11 +765,20 @@ def main():
         logging.info("Loading pipeline from TOML configuration...")
         pipeline, config = load_pipeline_from_toml(args.config)
         
+        # Validate selective loading requirements
+        if args.fps_only:
+            validate_fps_config(config)
+            logging.info("🎯 FPS-ONLY MODE: Will load only FPS-related parameters")
+        elif args.base_only:
+            validate_base_lora_config(config)
+            logging.info("🎯 BASE-ONLY MODE: Will load only base LoRA parameters")
+        
         # Apply checkpoint
         logging.info("Applying checkpoint...")
         # Get rank from TOML config or default
         fps_rank = config['model'].get('fps_adapter_rank', 32)
-        pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=fps_rank)
+        pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=fps_rank, 
+                                   fps_only=args.fps_only, base_only=args.base_only, config=config)
         
         # SUBTASK 2: Use TOML parameters for inference settings (with CLI overrides)
         # Extract inference parameters from TOML config or use defaults

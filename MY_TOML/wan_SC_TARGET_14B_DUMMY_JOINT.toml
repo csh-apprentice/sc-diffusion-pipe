@@ -6,10 +6,10 @@
 
 # Output path for training runs. Each training run makes a new directory in here.
 output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
-train_name = 'FPS_SHAPES_SINGLE_VID'
+train_name = 'FPS_dummy_joint'
 
 # Dataset config file.
-dataset = '/root/workspace/sc-diffusion-pipe/MY_TOML/dataset_SC_TARGET_SHAPE_SINGLE_VID.toml'
+dataset = '/root/workspace/sc-diffusion-pipe/MY_TOML/dataset_SC_TARGET_DUMMY.toml'
 
 # training settings
 
@@ -119,14 +119,12 @@ fps_gate_fixed_value = 0.5                        # NEW: Fixed gate value when f
 fps_adapter_rank = 32                             # Higher LoRA rank for FPS adapters
 fps_condition_blocks = "deepest_third"            # Apply to deepest third of transformer blocks
 
-# NO [adapter] block - This enables FPS-ONLY training
-# The absence of this block means no base LoRA will be trained
-# Only FPS adapters and FPS MLP will be trained
 [adapter]
 type = 'lora'
 rank = 32
 # Dtype for the LoRA weights you are training.
 dtype = 'bfloat16'
+
 
 [optimizer]
 # AdamW from the optimi library is a good default since it automatically uses Kahan summation when training bfloat16 weights.
