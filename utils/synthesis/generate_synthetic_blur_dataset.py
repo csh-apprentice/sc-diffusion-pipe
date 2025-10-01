@@ -307,7 +307,7 @@ def main():
     do_video = modes in ("video","both")
     align_mv = args.align_img_video and do_image and do_video
 
-    fps_values = [int(x.strip()) for x in args.fps_list.split(",") if x.strip()]
+    fps_values = [float(x.strip()) for x in args.fps_list.split(",") if x.strip()]
     min_fps = min(fps_values)
     W, H = args.width, args.height
 

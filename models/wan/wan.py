@@ -245,6 +245,7 @@ class WanPipeline(BasePipeline):
                 'fps_adapter_num_tokens': self.model_config.get('fps_adapter_num_tokens', 1),
                 'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
                 'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
+                'fps_reference_fps': self.model_config.get('fps_reference_fps', 240.0),
                 'fps_embed_dim': self.model_config.get('fps_embed_dim', 256),
                 'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64),
                 'fps_lora_alpha': self.model_config.get('fps_lora_alpha', 16),
@@ -268,6 +269,7 @@ class WanPipeline(BasePipeline):
                     'fps_adapter_num_tokens': self.model_config.get('fps_adapter_num_tokens', 1),
                     'fps_tau_transform': self.model_config.get('fps_tau_transform', "log1p"),
                     'fps_tau_scale': self.model_config.get('fps_tau_scale', 0.33333334),
+                    'fps_reference_fps': self.model_config.get('fps_reference_fps', 240.0),
                     'fps_embed_dim': self.model_config.get('fps_embed_dim', 256),
                     'fps_condition_hidden': self.model_config.get('fps_condition_hidden', 64),
                     'fps_lora_alpha': self.model_config.get('fps_lora_alpha', 16),
@@ -330,7 +332,12 @@ class WanPipeline(BasePipeline):
             p.original_name = name
 
     def __getattr__(self, name):
-        return getattr(self.diffusers_pipeline, name)
+        # Prevent infinite recursion by using __dict__ instead of hasattr()
+        if 'diffusers_pipeline' in self.__dict__:
+            diffusers_pipeline = self.__dict__['diffusers_pipeline']
+            if diffusers_pipeline is not None and hasattr(diffusers_pipeline, name):
+                return getattr(diffusers_pipeline, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     def get_vae(self):
         vae = self.vae.model
@@ -616,6 +623,7 @@ class InitialLayer(nn.Module):
         # FPS conditioning configuration
         self.fps_tau_transform = model.fps_tau_transform
         self.fps_tau_scale = model.fps_tau_scale
+        self.fps_reference_fps = model.fps_reference_fps
         
         # Test FPS checkpoint compatibility after model is fully loaded
         if hasattr(self, 'test_fps_checkpoint_compatibility'):
@@ -711,7 +719,7 @@ class InitialLayer(nn.Module):
         # Convert fps values to tau_rel and create conditioning embeddings
         # CRITICAL: Create tensor from x to maintain computation graph consistency
         fps_tensor = x.new_tensor(fps_values, dtype=torch.float32)
-        tau_rel = compute_tau_rel(fps_tensor, transform=self.fps_tau_transform, scale=self.fps_tau_scale).unsqueeze(-1)  # Shape: [batch_size, 1] 
+        tau_rel = compute_tau_rel(fps_tensor, reference_fps=self.fps_reference_fps, transform=self.fps_tau_transform, scale=self.fps_tau_scale).unsqueeze(-1)  # Shape: [batch_size, 1] 
         fps_conditioning = self.fps_conditioning(tau_rel)  # Shape: [batch_size, dim]
         
 

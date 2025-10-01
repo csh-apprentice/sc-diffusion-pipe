@@ -2,7 +2,9 @@ Training Command:
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate diffusion-pipe
 
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_DUMMY_JOINT.toml' > ./output/nohup_log/dummy_new_joint.out 2>&1 &
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_VID_BASEONLY.toml' > ./output/nohup_log/single_video_baseonly_6000.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_MOUTAIN_FLOWER.toml' > ./output/bokeh_nohup_log/moutain_flower_08.out 2>&1 &
 
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_IMG.toml' > ./output/nohup_log/sanity_shape_single_image.out 2>&1 &
@@ -98,18 +100,33 @@ python generate_synthetic_blur_dataset.py \
 
 nohup python test_fps_multiple_experiments_align.py \
     --config ../MY_TOML/wan_SC_TARGET_14B_DUMMY_JOINT.toml \
-    --checkpoint ../checkpoints/20250920_06-42-48/epoch420 \
-    --fps_values 12 60 240 \
+    --checkpoint ../checkpoints/20250926_23-41-32/epoch1000 \
+    --fps_values 1 4 32 \
     --steps 50 \
     --frames 49 \
-    --output_dir ../output/20250920_06-42-48_epoch420_fix_neg \
+    --output_dir ../output/20250926_23-41-32_epoch1000_bokeh \
     --prompt "A man running on the beach." \
     --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
     --seed 42 \
     --port 29502 \
     --width 512 \
     --height 512 \
-    > ../output/nohup_log/fps_comprehensive_experiment_20250920_06-42-48_epoch420_fix_neg_run.out 2>&1 &
+    > ../output/nohup_log/bokeh_20250926_23-41-32_epoch1000_run.out 2>&1 &
+
+
+
+python resize_image.py \
+  --input /root/workspace/BokehMe/K40/21/human.jpg \
+  --output /root/workspace/sc-diffusion-pipe/dataset/human_bokeh/1.6/human.jpg\
+  --width  512\
+  --height  675
+
+python resize_image.py \
+  --input /root/workspace/BokehMe/inputs/mouflower.jpg \
+  --output /root/workspace/BokehMe/inputs/mouflower_resize.jpg \
+  --width  512\
+  --height 364
+
 
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_EXTREME_TEST.toml' > ./output/nohup_log/fix_gate_test.out 2>&1 &

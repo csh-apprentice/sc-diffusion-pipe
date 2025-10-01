@@ -506,19 +506,25 @@ class DirectoryDataset:
         if regenerate_cache or not metadata_cache_file_1.exists() or not trust_cache:
             print('Intermediate metadata is not cached. Enumerating all files.')
             
-            # Check if we have fps-based folder structure (e.g., 12/clip1.mp4, 24/clip2.mp4)
+            # Check if we have fps-based folder structure (e.g., 12/clip1.mp4, 24/clip2.mp4, 23.98/clip3.mp4)
             fps_folders = []
             for item in self.path.iterdir():
-                if item.is_dir() and item.name.isdigit():
-                    fps_folders.append(item)
+                if item.is_dir():
+                    try:
+                        # Try to parse as float (supports both int and float values)
+                        float(item.name)
+                        fps_folders.append(item)
+                    except ValueError:
+                        # Not a numeric folder name, skip
+                        continue
             
             if fps_folders:
                 # FPS-based folder structure detected
-                fps_levels = [int(folder.name) for folder in fps_folders]
+                fps_levels = [float(folder.name) for folder in fps_folders]
                 print(f'[DEBUG] Detected fps-based folder structure with {len(fps_folders)} fps levels: {sorted(fps_levels)}')
                 files = []
                 for fps_folder in fps_folders:
-                    fps_value = int(fps_folder.name)
+                    fps_value = float(fps_folder.name)
                     folder_files = list(fps_folder.glob('*'))
                     folder_files = [f for f in folder_files if f.is_file()]
                     print(f'[DEBUG] FPS folder {fps_value}: found {len(folder_files)} files')
@@ -913,6 +919,19 @@ class Dataset:
                 continue  # mask is handled specially below
             if torch.is_tensor(value):
                 ret[key] = torch.stack([example[key] for example in examples])
+            elif key == 'fps':
+                # Special handling for fps values - convert to tensor for proper splitting
+                fps_values = [example[key] for example in examples]
+
+                # Check if all fps values are None (base-only training)
+                if all(fps is None for fps in fps_values):
+                    # For base-only training: create a tensor of zeros to avoid split errors
+                    # The model will handle zero fps_values for base-only training
+                    ret[key] = torch.zeros(len(fps_values), dtype=torch.float32)
+                else:
+                    # Normal FPS training: convert None values to a default fps (16)
+                    fps_tensor_values = [16.0 if fps is None else float(fps) for fps in fps_values]
+                    ret[key] = torch.tensor(fps_tensor_values, dtype=torch.float32)
             else:
                 ret[key] = [example[key] for example in examples]
         

@@ -23,7 +23,7 @@ def compute_tau_rel(
     # If you don't want a reference, pass reference_fps=None (uses tau = 1/fps)
     reference_fps: Optional[Number] = 240.0,
     # Transform to apply to tau (exposure proxy)
-    transform: str = "log1p",          # options: "raw" | "log" | "log1p" | "neglogfps"
+    transform: str = "log1p",          # options: "raw" | "log" | "log1p" | "neglogfps" | "centerlog1p"
     # Multiplicative scaling (kept as a multiplier, as you prefer)
     scale: float = 0.33333334,         # ≈ 1/3 → keeps log1p(240/fps) ~ [0, ~3] → [0, ~1]
     # Numerical stability
@@ -39,6 +39,7 @@ def compute_tau_rel(
       - "log":      log(tau_raw + eps)
       - "log1p":    log1p(tau_raw)              # recommended
       - "neglogfps": -log(fps + eps)            # equivalent to log(1/fps) up to a constant
+      - "centerlog1p": sign(reference_fps-fps) * log1p(abs(tau-1))  # centered around tau=1
 
     Returns same type as input (torch.Tensor or float/int).
     """
@@ -60,6 +61,13 @@ def compute_tau_rel(
         y = torch.log1p(tau)          # smooth & stable for our τ ∈ {1,2,4,6,10,20}
     elif transform == "neglogfps":
         y = -torch.log(x + eps)       # similar behavior; no reference needed
+    elif transform == "centerlog1p":
+        # Centered log1p transform: sign(reference_fps-fps) * log1p(abs(tau-1))
+        # This centers the transform around tau=1 (when fps=reference_fps)
+        if reference_fps is None:
+            raise ValueError("centerlog1p transform requires reference_fps to be specified")
+        sign_term = torch.sign(float(reference_fps) - x)
+        y = sign_term * torch.log1p(torch.abs(tau - 1.0))
     else:
         raise ValueError(f"Unknown transform: {transform}")
 
@@ -733,6 +741,7 @@ class WanModel(ModelMixin, ConfigMixin):
                  fps_adapter_num_tokens=1,
                  fps_tau_transform="log1p",
                  fps_tau_scale=0.33333334,
+                 fps_reference_fps=240.0,
                  fps_embed_dim=256,
                  fps_condition_hidden=64,
                  fps_lora_alpha=16,
@@ -797,6 +806,7 @@ class WanModel(ModelMixin, ConfigMixin):
         # FPS conditioning configuration
         self.fps_tau_transform = fps_tau_transform
         self.fps_tau_scale = fps_tau_scale
+        self.fps_reference_fps = fps_reference_fps
 
         # embeddings
         self.patch_embedding = nn.Conv3d(

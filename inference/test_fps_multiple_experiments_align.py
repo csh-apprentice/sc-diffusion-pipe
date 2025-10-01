@@ -240,7 +240,8 @@ def verify_fps_config_applied(pipeline, config):
         'fps_gate_mode': model_config.get('fps_gate_mode', 'default'),
         'fps_gate_fixed_value': model_config.get('fps_gate_fixed_value', 'default'),
         'fps_adapter_num_tokens': model_config.get('fps_adapter_num_tokens', 'default'),
-        'fps_embed_dim': model_config.get('fps_embed_dim', 'default')
+        'fps_embed_dim': model_config.get('fps_embed_dim', 'default'),
+        'fps_reference_fps': model_config.get('fps_reference_fps', 'default (240.0)')
     }
     
     logging.info("  Expected FPS configuration from TOML:")
@@ -263,6 +264,12 @@ def verify_fps_config_applied(pipeline, config):
     expected_mode = model_config.get('fps_gate_mode', 'learned')
     mode_match = "✅" if detected_mode == expected_mode else "⚠️"
     logging.info(f"  Gate mode check: Expected='{expected_mode}', Detected='{detected_mode}' {mode_match}")
+
+    # Verify fps_reference_fps is being used correctly
+    actual_reference_fps = getattr(pipeline, 'fps_reference_fps', 'not found')
+    expected_reference_fps = model_config.get('fps_reference_fps', 240.0)
+    reference_match = "✅" if actual_reference_fps == expected_reference_fps else "⚠️"
+    logging.info(f"  Reference FPS check: Expected={expected_reference_fps}, Actual={actual_reference_fps} {reference_match}")
 
 def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfloat16, fps_only=False, base_only=False, config=None):
     """Applies checkpoint weights (FPS-only or mixed LoRA+FPS)."""
@@ -604,7 +611,8 @@ def save_video_result(tensor, fps, prompt_short, output_dir, size):
         
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     clean_prompt = "".join(c for c in prompt_short if c.isalnum() or c in (' ', '_')).strip()[:30]
-    filename = f"fps_{fps:03d}_{clean_prompt.replace(' ', '_')}_{size[0]}x{size[1]}_{timestamp}.mp4"
+    fps_str = f"{fps:.2f}".replace('.', '_')
+    filename = f"fps_{fps_str}_{clean_prompt.replace(' ', '_')}_{size[0]}x{size[1]}_{timestamp}.mp4"
     filepath = os.path.join(output_dir, filename)
     
     logging.info(f"💾 Saving: {filename}")
@@ -737,7 +745,7 @@ def main():
     parser.add_argument('--config', required=True, help='Path to TOML configuration file')
     parser.add_argument('--checkpoint', required=True, help='Path to FPS checkpoint')
     parser.add_argument('--output_dir', default='./fps_experiments_align', help='Output directory')
-    parser.add_argument('--fps_values', nargs='+', type=int, default=[12, 24, 60], help='FPS values to test')
+    parser.add_argument('--fps_values', nargs='+', type=float, default=[12, 24, 60], help='FPS values to test')
     parser.add_argument('--prompt', default='A cat walking through a beautiful garden', help='Generation prompt')
     parser.add_argument('--negative_prompt', default='', help='Negative prompt (optional)')
     parser.add_argument('--steps', type=int, default=15, help='Denoising steps')

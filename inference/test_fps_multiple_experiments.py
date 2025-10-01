@@ -409,7 +409,8 @@ def save_video_result(tensor, fps, prompt_short, output_dir, size):
         
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     clean_prompt = "".join(c for c in prompt_short if c.isalnum() or c in (' ', '_')).strip()[:30]
-    filename = f"fps_{fps:03d}_{clean_prompt.replace(' ', '_')}_{size[0]}x{size[1]}_{timestamp}.mp4"
+    fps_str = f"{fps:.2f}".replace('.', '_')
+    filename = f"fps_{fps_str}_{clean_prompt.replace(' ', '_')}_{size[0]}x{size[1]}_{timestamp}.mp4"
     filepath = os.path.join(output_dir, filename)
     
     logging.info(f"💾 Saving: {filename}")
@@ -496,7 +497,7 @@ def main():
     parser.add_argument('--base_model', required=True, help='Path to base model')
     parser.add_argument('--checkpoint', required=True, help='Path to FPS checkpoint')
     parser.add_argument('--output_dir', default='./fps_experiments', help='Output directory')
-    parser.add_argument('--fps_values', nargs='+', type=int, default=[12, 24, 60], help='FPS values to test')
+    parser.add_argument('--fps_values', nargs='+', type=float, default=[12, 24, 60], help='FPS values to test')
     parser.add_argument('--prompt', default='A cat walking through a beautiful garden', help='Generation prompt')
     parser.add_argument('--steps', type=int, default=15, help='Denoising steps')
     parser.add_argument('--frames', type=int, default=33, help='Number of frames')
