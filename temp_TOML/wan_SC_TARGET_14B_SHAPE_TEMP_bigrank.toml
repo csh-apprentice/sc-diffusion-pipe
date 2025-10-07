@@ -6,10 +6,10 @@
 
 # Output path for training runs. Each training run makes a new directory in here.
 output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
-train_name = 'TEMP_moutain_flower'
+train_name = 'TEMP_SHAPE'
 
 # Dataset config file.
-dataset = '/root/workspace/sc-diffusion-pipe/temp_TOML/dataset_SC_TARGET_MOUNTAIN_FLOWER.toml'
+dataset = '/root/workspace/sc-diffusion-pipe/temp_TOML/dataset_SC_TARGET_SHAPE_TEMP.toml'
 
 # training settings
 
@@ -91,7 +91,7 @@ fps_embed_dim = 256                               # FPS MLP output dimension
 fps_adapter_gate_init = 0.0                       # EXTREME: sigmoid(0) = 0.5 (50% FPS influence)
 
 # SubTask 6: Configurable LoRA alpha scaling
-fps_lora_alpha = 32.0                             # LoRA alpha = rank for scale = 1.0 (scale = alpha/rank = 32/32 = 1.0)
+fps_lora_alpha = 128.0                             # LoRA alpha = rank for scale = 1.0 (scale = alpha/rank = 32/32 = 1.0)
 
 # ========== NEW: CONFIGURABLE GATE MODES ==========
 # Choose between learned and fixed gate modes:
@@ -117,8 +117,8 @@ fps_gate_fixed_value = 0.5                        # NEW: Fixed gate value when f
 # (Implemented in code - K_fps normalized to match K_text scale)
 
 # Core FPS adapter settings
-fps_adapter_rank = 32                             # Higher LoRA rank for FPS adapters
-fps_condition_blocks = "all"            # Apply to deepest third of transformer blocks
+fps_adapter_rank = 128                             # Higher LoRA rank for FPS adapters
+fps_condition_blocks = "deepest_third"            # Apply to deepest third of transformer blocks
 
 # NO [adapter] block - This enables FPS-ONLY training
 # The absence of this block means no base LoRA will be trained

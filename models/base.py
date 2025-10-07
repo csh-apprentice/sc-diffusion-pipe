@@ -210,25 +210,32 @@ class BasePipeline:
         adapter_state_dict = safetensors.torch.load_file(safetensors_files[0])
         modified_state_dict = {}
         model_parameters = set(name for name, p in self.transformer.named_parameters())
-        fps_adapter_params_loaded = 0
-        
+
+        # Track what types of params were loaded
+        loaded_param_names = set()
+        base_lora_loaded = 0
+        fps_mlp_loaded = 0
+        fps_adapter_loaded = 0
+
         for k, v in adapter_state_dict.items():
             # Replace Diffusers or ComfyUI prefix
             k_original = k
             k = re.sub(r'^(transformer|diffusion_model)\.', '', k)
-            
+
             # Special handling for FPS parameters (no .default suffix needed)
             if 'fps_adapter' in k:
                 if k in model_parameters:
                     modified_state_dict[k] = v
-                    fps_adapter_params_loaded += 1
+                    loaded_param_names.add(k)
+                    fps_adapter_loaded += 1
                 else:
                     print(f'[FPS_ADAPTER_LOAD] Warning: FPS adapter parameter {k} not found in model')
             elif 'fps_conditioning' in k:
                 # Handle FPS MLP parameters - they don't need .default suffix either
                 if k in model_parameters:
                     modified_state_dict[k] = v
-                    fps_adapter_params_loaded += 1  # Count as FPS param
+                    loaded_param_names.add(k)
+                    fps_mlp_loaded += 1
                     print(f'[FPS_MLP_LOAD] Loading FPS MLP parameter: {k}')
                 else:
                     print(f'[FPS_MLP_LOAD] Warning: FPS MLP parameter {k} not found in model')
@@ -238,10 +245,23 @@ class BasePipeline:
                 if k not in model_parameters:
                     raise RuntimeError(f'modified_state_dict key {k} is not in the model parameters')
                 modified_state_dict[k] = v
-        
-        if fps_adapter_params_loaded > 0:
-            print(f'[FPS_LOAD] Successfully loaded {fps_adapter_params_loaded} FPS parameters (adapters + MLP)')
+                loaded_param_names.add(k)
+                base_lora_loaded += 1
+
+        if fps_mlp_loaded > 0 or fps_adapter_loaded > 0:
+            print(f'[FPS_LOAD] Successfully loaded {fps_mlp_loaded} FPS MLP + {fps_adapter_loaded} FPS adapter parameters')
+        if base_lora_loaded > 0:
+            print(f'[LORA_LOAD] Successfully loaded {base_lora_loaded} base LoRA parameters')
+
         self.transformer.load_state_dict(modified_state_dict, strict=False)
+
+        # Return info about what was loaded for selective freezing
+        return {
+            'loaded_param_names': loaded_param_names,
+            'has_base_lora': base_lora_loaded > 0,
+            'has_fps_mlp': fps_mlp_loaded > 0,
+            'has_fps_adapter': fps_adapter_loaded > 0
+        }
 
     def load_and_fuse_adapter(self, path):
         peft_config = peft.LoraConfig.from_pretrained(path)

@@ -783,9 +783,9 @@ def main():
         
         # Apply checkpoint
         logging.info("Applying checkpoint...")
-        # Get rank from TOML config or default
-        fps_rank = config['model'].get('fps_adapter_rank', 32)
-        pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=fps_rank, 
+        # Get base LoRA rank from TOML config or default
+        base_rank = config.get('adapter', {}).get('rank', 32)
+        pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=base_rank,
                                    fps_only=args.fps_only, base_only=args.base_only, config=config)
         
         # SUBTASK 2: Use TOML parameters for inference settings (with CLI overrides)

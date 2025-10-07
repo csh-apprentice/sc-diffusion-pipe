@@ -446,15 +446,26 @@ if __name__ == '__main__':
 
     model.load_diffusion_model()
 
+    # Check for top-level init_from_existing (resume workflow)
+    top_level_init = config.get('init_from_existing', None)
+    loaded_checkpoint_info = None
+
     if adapter_config := config.get('adapter', None):
         model.configure_adapter(adapter_config)
         is_adapter = True
-        if init_from_existing := adapter_config.get('init_from_existing', None):
-            model.load_adapter_weights(init_from_existing)
+        # Prefer adapter-level init_from_existing, fall back to top-level
+        init_path = adapter_config.get('init_from_existing', top_level_init)
+        if init_path:
+            if is_main_process():
+                print(f"[RESUME] Loading adapter weights from: {init_path}")
+            loaded_checkpoint_info = model.load_adapter_weights(init_path)
     else:
         is_adapter = False
         # NOTE: We'll freeze base model parameters AFTER creating the pipeline module
         # to ensure proper gradient flow for FPS parameters
+
+    # Store init_path for later use (FPS param loading after pipeline creation)
+    init_from_existing = top_level_init or (adapter_config.get('init_from_existing', None) if adapter_config else None)
 
     # if this is a new run, create a new dir for it
     if not resume_from_checkpoint and is_main_process():
@@ -583,7 +594,163 @@ if __name__ == '__main__':
     
     if fps_mlp_params_fixed > 0 or fps_adapter_params_fixed > 0:
         print(f'[FPS_FIX] Had to re-enable gradients for {fps_mlp_params_fixed} FPS MLP + {fps_adapter_params_fixed} FPS adapter parameters')
-        
+
+    # RESUME WORKFLOW: Freeze loaded parameters based on explicit config options
+    # This runs for both top-level and adapter-level init_from_existing
+    # Backward compatible: defaults (all freeze=False) match old behavior + add reinitialization
+    if loaded_checkpoint_info and init_from_existing:
+        # Get explicit freeze options from config
+        freeze_base_lora_option = False
+        freeze_fps_mlp_option = False
+        freeze_fps_adapters_option = False
+
+        if adapter_config:
+            freeze_base_lora_option = adapter_config.get('freeze_base_lora', False)
+
+        model_config = config.get('model', {})
+        freeze_fps_mlp_option = model_config.get('freeze_fps_mlp', False)
+        freeze_fps_adapters_option = model_config.get('freeze_fps_adapters', False)
+
+        if is_main_process():
+            print(f"\n{'='*80}")
+            print(f"[RESUME] Checkpoint Resume Workflow")
+            print(f"{'='*80}")
+            print(f"[RESUME] Checkpoint path: {init_from_existing}")
+            print(f"\n[RESUME] Checkpoint contents:")
+            print(f"  - Base LoRA: {'✓ LOADED' if loaded_checkpoint_info['has_base_lora'] else '✗ Not present'}")
+            print(f"  - FPS MLP: {'✓ LOADED' if loaded_checkpoint_info['has_fps_mlp'] else '✗ Not present'}")
+            print(f"  - FPS Adapters: {'✓ LOADED' if loaded_checkpoint_info['has_fps_adapter'] else '✗ Not present'}")
+            print(f"\n[RESUME] Freeze configuration:")
+            print(f"  - freeze_base_lora: {freeze_base_lora_option}")
+            print(f"  - freeze_fps_mlp: {freeze_fps_mlp_option}")
+            print(f"  - freeze_fps_adapters: {freeze_fps_adapters_option}")
+            print(f"\n[RESUME] Applying selective parameter freezing...")
+
+        # Apply freezing only if explicitly requested AND params exist in checkpoint
+        freeze_base_lora = loaded_checkpoint_info['has_base_lora'] and freeze_base_lora_option
+        freeze_fps_mlp = loaded_checkpoint_info['has_fps_mlp'] and freeze_fps_mlp_option
+        freeze_fps_adapters = loaded_checkpoint_info['has_fps_adapter'] and freeze_fps_adapters_option
+
+        params_frozen = 0
+        base_lora_frozen = 0
+        fps_mlp_frozen = 0
+        fps_adapters_frozen = 0
+
+        for name, param in pipeline_model.named_parameters():
+            should_freeze = False
+
+            # Freeze base LoRA if loaded and freeze option enabled
+            if freeze_base_lora and '.lora_' in name and 'fps' not in name:
+                should_freeze = True
+                base_lora_frozen += 1
+
+            # Freeze FPS MLP if loaded and freeze option enabled
+            if freeze_fps_mlp and 'fps_conditioning' in name:
+                should_freeze = True
+                fps_mlp_frozen += 1
+
+            # Freeze FPS adapters if loaded and freeze option enabled
+            if freeze_fps_adapters and 'fps_adapter' in name:
+                should_freeze = True
+                fps_adapters_frozen += 1
+
+            if should_freeze and param.requires_grad:
+                param.requires_grad_(False)
+                params_frozen += 1
+
+        if is_main_process():
+            if params_frozen > 0:
+                print(f"\n[RESUME] Freezing summary:")
+                print(f"  - Total parameters frozen: {params_frozen}")
+                if base_lora_frozen > 0:
+                    print(f"  - Base LoRA: {base_lora_frozen} params frozen")
+                if fps_mlp_frozen > 0:
+                    print(f"  - FPS MLP: {fps_mlp_frozen} params frozen")
+                if fps_adapters_frozen > 0:
+                    print(f"  - FPS Adapters: {fps_adapters_frozen} params frozen")
+            else:
+                print(f"\n[RESUME] No parameters frozen (all will be trained)")
+
+        # Reinitialize NEW FPS parameters that weren't in checkpoint
+        # This ensures proper zero-disturbance initialization for new FPS adapters
+        if not loaded_checkpoint_info['has_fps_adapter'] and not freeze_fps_adapters_option:
+            # NEW FPS adapters were created but not loaded from checkpoint - reinitialize them
+            fps_adapters_reinitialized = 0
+            if is_main_process():
+                print(f"\n[RESUME] Reinitializing NEW FPS adapters (not in checkpoint)...")
+
+            for name, module in pipeline_model.named_modules():
+                if 'fps_adapter' in name and hasattr(module, '_init_lora_weights'):
+                    module._init_lora_weights()
+                    fps_adapters_reinitialized += 1
+
+            if is_main_process() and fps_adapters_reinitialized > 0:
+                print(f"[RESUME] ✓ Reinitialized {fps_adapters_reinitialized} NEW FPS adapters")
+
+        # Reinitialize FPS MLP if not in checkpoint
+        if not loaded_checkpoint_info['has_fps_mlp'] and not freeze_fps_mlp_option:
+            fps_mlp_reinitialized = False
+            if is_main_process():
+                print(f"\n[RESUME] Reinitializing NEW FPS MLP (not in checkpoint)...")
+
+            for name, module in pipeline_model.named_modules():
+                if 'fps_conditioning' in name and hasattr(module, '_init_weights'):
+                    module._init_weights()
+                    fps_mlp_reinitialized = True
+                    break
+
+            if is_main_process() and fps_mlp_reinitialized:
+                print(f"[RESUME] ✓ Reinitialized FPS MLP")
+
+        # Final summary: Show what will be trained
+        if is_main_process():
+            trainable_base_lora = 0
+            trainable_fps_mlp = 0
+            trainable_fps_adapters = 0
+
+            for name, param in pipeline_model.named_parameters():
+                if param.requires_grad:
+                    if 'fps_conditioning' in name:
+                        trainable_fps_mlp += 1
+                    elif 'fps_adapter' in name:
+                        trainable_fps_adapters += 1
+                    elif '.lora_' in name or '.default.' in name:
+                        trainable_base_lora += 1
+
+            print(f"\n[RESUME] Training summary:")
+            print(f"  - Base LoRA: {trainable_base_lora} params {'(TRAINING)' if trainable_base_lora > 0 else '(FROZEN)'}")
+            print(f"  - FPS MLP: {trainable_fps_mlp} params {'(TRAINING)' if trainable_fps_mlp > 0 else '(FROZEN)'}")
+            print(f"  - FPS Adapters: {trainable_fps_adapters} params {'(TRAINING)' if trainable_fps_adapters > 0 else '(FROZEN)'}")
+
+            # Show initial parameter magnitudes
+            print(f"\n[RESUME] Initial parameter magnitudes:")
+
+            # Base LoRA sample
+            for name, param in pipeline_model.named_parameters():
+                if '.lora_' in name and 'fps' not in name and 'default' in name:
+                    norm = param.data.norm().item()
+                    mean = param.data.mean().item()
+                    print(f"  Base LoRA (sample {name[:60]}...): norm={norm:.6f}, mean={mean:.6f}, grad={param.requires_grad}")
+                    break
+
+            # FPS MLP
+            for name, param in pipeline_model.named_parameters():
+                if 'fps_conditioning.lin2.weight' in name:
+                    norm = param.data.norm().item()
+                    mean = param.data.mean().item()
+                    print(f"  FPS MLP lin2: norm={norm:.6f}, mean={mean:.6f}, grad={param.requires_grad}")
+                    break
+
+            # FPS adapters sample
+            for name, param in pipeline_model.named_parameters():
+                if 'fps_adapter' in name and 'k_fps_up.weight' in name:
+                    norm = param.data.norm().item()
+                    mean = param.data.mean().item()
+                    print(f"  FPS Adapter (sample {name[:60]}...): norm={norm:.6f}, mean={mean:.6f}, grad={param.requires_grad}")
+                    break
+
+            print(f"{'='*80}\n")
+
     # Debug: Final verification
     fps_params_enabled_after = 0
     for name, param in pipeline_model.named_parameters():
@@ -920,11 +1087,12 @@ if __name__ == '__main__':
             return
             
         print(f"\n[FPS_MAGNITUDE] Epoch {epoch} - Checking pipeline model parameters:")
-        
+
         # In pipeline parallel mode, we need to iterate through the pipeline module's parameters
+        base_lora_params = {}
         fps_mlp_params = {}
         fps_adapter_params = {}
-        
+
         for name, param in model_engine.module.named_parameters():
             if 'fps_conditioning' in name:
                 if not param.is_meta:
@@ -942,16 +1110,37 @@ if __name__ == '__main__':
                         'max': param.data.abs().max().item(),
                         'requires_grad': param.requires_grad
                     }
+            elif ('.lora_' in name or '.default.' in name) and 'fps' not in name:
+                # Base LoRA parameters
+                if not param.is_meta and len(base_lora_params) < 3:  # Sample first 3
+                    base_lora_params[name] = {
+                        'mean': param.data.abs().mean().item(),
+                        'std': param.data.std().item(),
+                        'max': param.data.abs().max().item(),
+                        'requires_grad': param.requires_grad
+                    }
         
-        # Print FPS MLP parameters
+        # Print Base LoRA parameters (sample) with training status
+        if base_lora_params:
+            print("  Base LoRA Parameters (sample):")
+            for name, stats in base_lora_params.items():
+                short_name = name.split('.')[-4:]  # Show more context for LoRA
+                short_name = '.'.join(short_name)
+                if len(short_name) > 60:
+                    short_name = short_name[-60:]
+                status = "TRAINING" if stats['requires_grad'] else "FROZEN"
+                print(f"    {short_name}: mean={stats['mean']:.6f}, std={stats['std']:.6f}, max={stats['max']:.6f} [{status}]")
+
+        # Print FPS MLP parameters with training status
         if fps_mlp_params:
             print("  FPS MLP Parameters:")
             for name, stats in fps_mlp_params.items():
                 short_name = name.split('.')[-2:]
                 short_name = '.'.join(short_name)
-                print(f"    {short_name}: mean={stats['mean']:.6f}, std={stats['std']:.6f}, max={stats['max']:.6f}, grad={stats['requires_grad']}")
-        
-        # Print FPS adapter parameters (sample a few)
+                status = "TRAINING" if stats['requires_grad'] else "FROZEN"
+                print(f"    {short_name}: mean={stats['mean']:.6f}, std={stats['std']:.6f}, max={stats['max']:.6f} [{status}]")
+
+        # Print FPS adapter parameters (sample a few) with training status
         if fps_adapter_params:
             print("  FPS Adapter Parameters (sample):")
             count = 0
@@ -961,7 +1150,8 @@ if __name__ == '__main__':
                     break
                 short_name = name.split('.')[-3:]
                 short_name = '.'.join(short_name)
-                print(f"    {short_name}: mean={stats['mean']:.6f}, std={stats['std']:.6f}, max={stats['max']:.6f}, grad={stats['requires_grad']}")
+                status = "TRAINING" if stats['requires_grad'] else "FROZEN"
+                print(f"    {short_name}: mean={stats['mean']:.6f}, std={stats['std']:.6f}, max={stats['max']:.6f} [{status}]")
                 count += 1
         
         if not fps_mlp_params and not fps_adapter_params:

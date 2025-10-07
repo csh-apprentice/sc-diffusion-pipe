@@ -4,6 +4,14 @@ conda activate diffusion-pipe
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_VID_BASEONLY.toml' > ./output/nohup_log/single_video_baseonly_6000.out 2>&1 &
 
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_MOUTAIN_FLOWER.toml' > ./output/temp_nohup_log/temp_mf_all_104.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_BALL_KITCHEN.toml' > ./output/bokeh_nohup_log/ball_kitchen.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_SHAPE_TEMP_REDBLUE2D.toml' > ./output/temp_nohup_log/redblue_deepthird2d.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_SHAPE_TEMP_REDBLUEWHITE.toml' > ./output/temp_nohup_log/redbluewhite_deepthird.out 2>&1 &
+
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_MOUTAIN_FLOWER.toml' > ./output/bokeh_nohup_log/moutain_flower_08.out 2>&1 &
 
 
@@ -140,3 +148,8 @@ tensorboard --logdir /root/workspace/sc-diffusion-pipe/checkpoints \
 
 
 ssh -L 7007:127.0.0.1:7007 shihanc-shuttercontrol.workbench.prod.netflix.net
+
+
+python make_palette_2x2.py \
+  --out four_colors.png \
+  --colors "#FF0000,#00FF00,#0000FF,#FFFF00"

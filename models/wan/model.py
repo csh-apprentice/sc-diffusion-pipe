@@ -828,10 +828,12 @@ class WanModel(ModelMixin, ConfigMixin):
         else:
             cross_attn_type = 'default'
             
-        # determine which blocks get fps adapter (deepest third)
+        # determine which blocks get fps adapter (deepest third or all)
         if isinstance(fps_condition_blocks, str) and fps_condition_blocks == "deepest_third":
             fps_blocks_count = num_layers // 3
             fps_block_indices = set(range(num_layers - fps_blocks_count, num_layers))
+        elif isinstance(fps_condition_blocks, str) and fps_condition_blocks == "all":
+            fps_block_indices = set(range(num_layers))
         elif isinstance(fps_condition_blocks, int):
             fps_blocks_count = min(fps_condition_blocks, num_layers)
             fps_block_indices = set(range(num_layers - fps_blocks_count, num_layers))

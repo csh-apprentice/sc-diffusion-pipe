@@ -6,15 +6,15 @@
 
 # Output path for training runs. Each training run makes a new directory in here.
 output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
-train_name = 'TEMP_moutain_flower'
+train_name = 'TEMP_REDBLUE'
 
 # Dataset config file.
-dataset = '/root/workspace/sc-diffusion-pipe/temp_TOML/dataset_SC_TARGET_MOUNTAIN_FLOWER.toml'
+dataset = '/root/workspace/sc-diffusion-pipe/temp_TOML/dataset_SC_TARGET_SHAPE_TEMP_REDBLUE.toml'
 
 # training settings
 
 # I usually set this to a really high value because I don't know how long I want to train.
-epochs = 1000
+epochs = 500
 # Batch size of a single forward/backward pass for one GPU.
 micro_batch_size_per_gpu = 1
 # Pipeline parallelism degree. A single instance of the model is divided across this many GPUs.
@@ -40,7 +40,7 @@ eval_gradient_accumulation_steps = 1
 # misc settings
 
 # Probably want to set this a bit higher if you have a smaller dataset so you don't end up with a million saved models.
-save_every_n_epochs = 25
+save_every_n_epochs = 10
 save_every_n_steps = 1000  # Save more frequently for testing
 # Can checkpoint the training state every n number of epochs or minutes. Set only one of these. You can resume from checkpoints using the --resume_from_checkpoint flag.
 #checkpoint_every_n_epochs = 1
@@ -118,7 +118,7 @@ fps_gate_fixed_value = 0.5                        # NEW: Fixed gate value when f
 
 # Core FPS adapter settings
 fps_adapter_rank = 32                             # Higher LoRA rank for FPS adapters
-fps_condition_blocks = "all"            # Apply to deepest third of transformer blocks
+fps_condition_blocks = "deepest_third"            # Apply to deepest third of transformer blocks
 
 # NO [adapter] block - This enables FPS-ONLY training
 # The absence of this block means no base LoRA will be trained

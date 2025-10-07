@@ -1,0 +1,1 @@
+Image of a red circle at the top-left, a green star at the bottom-right, a blue square at the top-right. (All shapes sharp)
