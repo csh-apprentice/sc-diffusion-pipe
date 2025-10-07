@@ -70,7 +70,9 @@ def load_pipeline_from_toml(toml_path):
         'fps_condition_hidden': model_config.get('fps_condition_hidden'),
         'fps_lora_alpha': model_config.get('fps_lora_alpha'),
         'fps_gate_mode': model_config.get('fps_gate_mode'),
-        'fps_gate_fixed_value': model_config.get('fps_gate_fixed_value')
+        'fps_gate_fixed_value': model_config.get('fps_gate_fixed_value'),
+        'fps_scale': model_config.get('fps_scale'),
+        'fps_warmup_steps': model_config.get('fps_warmup_steps')
     }
     logging.info("Complete FPS configuration from TOML (aligned with wan.py):")
     for key, value in fps_settings.items():
@@ -241,7 +243,9 @@ def verify_fps_config_applied(pipeline, config):
         'fps_gate_fixed_value': model_config.get('fps_gate_fixed_value', 'default'),
         'fps_adapter_num_tokens': model_config.get('fps_adapter_num_tokens', 'default'),
         'fps_embed_dim': model_config.get('fps_embed_dim', 'default'),
-        'fps_reference_fps': model_config.get('fps_reference_fps', 'default (240.0)')
+        'fps_reference_fps': model_config.get('fps_reference_fps', 'default (240.0)'),
+        'fps_scale': model_config.get('fps_scale', 'default (False)'),
+        'fps_warmup_steps': model_config.get('fps_warmup_steps', 'default (100)')
     }
     
     logging.info("  Expected FPS configuration from TOML:")
@@ -251,18 +255,24 @@ def verify_fps_config_applied(pipeline, config):
     # Check gate mode by looking at buffer vs parameter names
     has_gate_alpha = any('gate_alpha' in n for n, _ in pipeline.transformer.named_parameters())
     has_gate_fixed = any('gate_fixed' in n for n, _ in pipeline.transformer.named_buffers())
-    
+
+    # Learnable modes: sigmoid, identity, relu, silu, softplus (all use gate_alpha parameter)
+    # Fixed mode: uses gate_fixed buffer
     if has_gate_alpha and not has_gate_fixed:
-        detected_mode = "learned"
+        detected_mode = "learnable (sigmoid/identity/relu/silu/softplus)"
     elif has_gate_fixed and not has_gate_alpha:
         detected_mode = "fixed"
     elif has_gate_alpha and has_gate_fixed:
         detected_mode = "mixed (both found)"
     else:
         detected_mode = "unknown"
-    
-    expected_mode = model_config.get('fps_gate_mode', 'learned')
-    mode_match = "✅" if detected_mode == expected_mode else "⚠️"
+
+    expected_mode = model_config.get('fps_gate_mode', 'sigmoid')  # Default changed from 'learned' to 'sigmoid'
+    # Check if expected mode matches detected mode category
+    learnable_modes = ['sigmoid', 'identity', 'relu', 'silu', 'softplus']
+    expected_is_learnable = expected_mode in learnable_modes
+    detected_is_learnable = has_gate_alpha and not has_gate_fixed
+    mode_match = "✅" if (expected_is_learnable == detected_is_learnable) or (expected_mode == 'fixed' and detected_mode == 'fixed') else "⚠️"
     logging.info(f"  Gate mode check: Expected='{expected_mode}', Detected='{detected_mode}' {mode_match}")
 
     # Verify fps_reference_fps is being used correctly
