@@ -47,3 +47,8 @@ for a 2 condition case, so 1.0 and 240 should be apply to condition1, 2.0 and 2.
 self.lin1 = nn.Linear(1, hidden)
 1 referes to that single consition, now since we should support multi-condition that input dimension should be decided by how many conditions we have when parsing the dataset.
 
+
+To test, an example trainig dataset with 2 conditions is listed in /root/workspace/sc-diffusion-pipe/dataset/2shapes_shutter_bokeh
+
+An toml file is written in /root/workspace/sc-diffusion-pipe/shutter_bokeh_TOML/wan_SC_TARGET_14B_2SHAPES_SHUTTER_BOKEH.toml
+
