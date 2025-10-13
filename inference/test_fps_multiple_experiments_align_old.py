@@ -436,78 +436,8 @@ def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfl
     
     return wan_t2v_pipeline
 
-def calibrate_alignment_ratios(pipeline, config, prompt, n_prompt, fps_values, seed, steps, scale, frames, size, shift):
-    """
-    NEW ALGORITHM: Measure rboth_ijk = ||y_fps|| / ||y_text|| with base LoRA + FPS.
-
-    Returns dict: {(step_i, block_j, fps_k): rboth_ijk}
-
-    This ratio will be used during fps_only inference to scale y_fps to match training distribution:
-        y_fps_aligned = y_fps * (rboth_ijk / rfps_ijk)
-
-    Steps:
-    1. Run full inference with base LoRA + FPS for all FPS values
-    2. At each denoising step, capture ||y_fps|| and ||y_text|| for each block
-    3. Store rboth_ijk = ||y_fps|| / ||y_text|| for all (i, j, k)
-    """
-    logging.info("🔧 Running NEW alignment calibration pass...")
-    logging.info("  Measuring rboth_ijk = ||y_fps|| / ||y_text|| at each denoising step")
-
-    device = pipeline.transformer.device
-
-    # Storage for rboth_ijk ratios: {(step_i, block_j, fps_k): ||y_fps|| / ||y_text||}
-    rboth_ratios = {}
-
-    # Find all blocks with FPS adapters
-    fps_adapter_block_indices = []
-    for block_idx, block in enumerate(pipeline.transformer.blocks):
-        if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
-            fps_adapter_block_indices.append(block_idx)
-
-    logging.info(f"  Found {len(fps_adapter_block_indices)} blocks with FPS adapters")
-
-    # === CHECK: Is base LoRA present? ===
-    base_lora_count = sum(1 for n, _ in pipeline.transformer.named_parameters() if '.lora_' in n and 'fps' not in n)
-    logging.info(f"  Found {base_lora_count} base LoRA parameters in model")
-
-    if base_lora_count == 0:
-        logging.warning("  ⚠️  NO BASE LoRA DETECTED!")
-        logging.warning("  This checkpoint was likely trained with --fps_only mode.")
-        logging.warning("  Alignment requires a checkpoint trained WITH base LoRA.")
-        logging.warning("  Skipping calibration - returning empty ratios.")
-        return {}
-
-    # Run calibration inference for each FPS value with base LoRA + FPS
-    print(f"\n🔧 CALIBRATION: Running inference with base LoRA + FPS for {len(fps_values)} FPS values", flush=True)
-    print(f"   Will capture rboth_ijk = ||y_fps|| / ||y_text|| at ALL denoising steps", flush=True)
-
-    for fps_idx, fps_value in enumerate(fps_values):
-        print(f"\n  Calibrating FPS={fps_value} ({fps_idx+1}/{len(fps_values)})...", flush=True)
-
-        # We'll capture ratios during generation by wrapping the FPS adapter
-        # This is done inside generate_video_with_fps by passing capture_ratios=True
-        _ = generate_video_with_fps(
-            pipeline, config, prompt, n_prompt, fps_value, seed, steps, scale, frames, size, shift,
-            force_gate_one=False,
-            alignment_ratios=None,
-            capture_rboth=True,  # NEW: Enable ratio capture mode
-            rboth_storage=rboth_ratios,  # Storage dict
-            fps_idx=fps_idx  # FPS index k
-        )
-
-    print(f"\n✅ Calibration complete: Captured {len(rboth_ratios)} rboth_ijk ratios", flush=True)
-    print(f"   Total: {len(fps_values)} FPS values × {steps} steps × {len(fps_adapter_block_indices)} blocks", flush=True)
-
-    return rboth_ratios
-
-def generate_video_with_fps(pipeline, config, prompt, n_prompt, fps=60, seed=42, steps=25, scale=7.0, frames=49, size=(512, 320), shift=3.0, force_gate_one=False, alignment_ratios=None, capture_rboth=False, rboth_storage=None, fps_idx=None):
-    """Generates a video with specific FPS conditioning.
-
-    NEW PARAMS:
-    - capture_rboth: If True, capture rboth_ijk = ||y_fps|| / ||y_text|| ratios during generation
-    - rboth_storage: Dict to store captured ratios {(step_i, block_j, fps_k): rboth}
-    - fps_idx: FPS index k for storage key
-    """
+def generate_video_with_fps(pipeline, config, prompt, n_prompt, fps=60, seed=42, steps=25, scale=7.0, frames=49, size=(512, 320), shift=3.0, force_gate_one=False):
+    """Generates a video with specific FPS conditioning."""
     logging.info(f"🎬 Generating video with FPS={fps}")
     if force_gate_one:
         logging.info("🔧 DIAGNOSTIC MODE: Will force gates to 1.0")
@@ -598,107 +528,7 @@ def generate_video_with_fps(pipeline, config, prompt, n_prompt, fps=60, seed=42,
                 gate_value = buffer.data.item()
                 logging.info(f"    {name}: gate={gate_value:.6f} (FIXED)")
                 break  # Just show one example
-
-    # 🔧 Apply alignment scaling if provided (for fps_only mode)
-    alignment_hooks = []
-    if alignment_ratios is not None:
-        logging.info("🔧 Applying magnitude alignment for fps_only mode")
-        logging.info(f"  Will scale y_fps by (mfps_i / mboth_i) ratio per block")
-        logging.info(f"  Formula: y = y_text + g(α) * y_fps * (mfps_i / mboth_i)")
-
-        def make_scaling_forward(original_forward, block_idx, scale_ratio):
-            """Wraps FPS adapter forward to scale y_fps by alignment ratio"""
-            def scaling_forward(q, k_text, v_text, fps_conditioning, context_lens):
-                # Import flash_attention locally
-                from models.wan.attention import flash_attention
-
-                # Compute y_text
-                y_text = flash_attention(q, k_text, v_text, k_lens=context_lens)
-
-                # Compute y_fps (same as original)
-                # [Copy the FPS adapter logic to compute y_fps]
-                module = scaling_forward.__self__  # Get the FPS adapter module
-
-                # Project FPS conditioning
-                k_fps_proj = module.k_fps_up(module.k_fps_down(fps_conditioning))
-                v_fps_proj = module.v_fps_up(module.v_fps_down(fps_conditioning))
-
-                # Normalize and reshape
-                B = q.size(0)
-                k_fps_proj = k_fps_proj.view(B * module.num_tokens, module.dim)
-                k_fps_proj = module.norm_k_fps(k_fps_proj)
-                k_fps_proj = k_fps_proj.view(B, module.num_tokens * module.dim)
-
-                # Apply LoRA scale
-                k_fps_proj = k_fps_proj * module.lora_scale
-                v_fps_proj = v_fps_proj * module.lora_scale
-
-                # Reshape to attention layout
-                k_fps = k_fps_proj.view(B, module.num_tokens, module.num_heads, module.head_dim)
-                v_fps = v_fps_proj.view(B, module.num_tokens, module.num_heads, module.head_dim)
-
-                # Compute FPS attention
-                y_fps = flash_attention(q, k_fps, v_fps, k_lens=None)
-
-                # Apply fps_scale if enabled
-                if module.fps_scale:
-                    y_text_norm = torch.norm(y_text)
-                    y_fps_norm = torch.norm(y_fps)
-                    y_fps_norm_safe = y_fps_norm + 1e-8
-                    scale_factor = y_text_norm / y_fps_norm_safe
-                    y_fps = y_fps * scale_factor
-
-                # Compute gate
-                if module.gate_mode == 'sigmoid':
-                    gate = torch.sigmoid(module.gate_alpha)
-                elif module.gate_mode == 'identity':
-                    gate = module.gate_alpha
-                elif module.gate_mode == 'relu':
-                    gate = torch.relu(module.gate_alpha)
-                elif module.gate_mode == 'silu':
-                    gate = torch.nn.functional.silu(module.gate_alpha)
-                elif module.gate_mode == 'softplus':
-                    gate = torch.nn.functional.softplus(module.gate_alpha)
-                elif module.gate_mode == 'fixed':
-                    gate = module.gate_fixed
-                else:
-                    gate = 1.0
-
-                # Warmup (should be 1.0 during inference)
-                warmup_factor = 1.0
-
-                # *** APPLY ALIGNMENT SCALING HERE ***
-                y_fps_scaled = y_fps * scale_ratio
-
-                # Final output
-                y_combined = y_text + (warmup_factor * gate) * y_fps_scaled
-
-                return y_combined
-
-            return scaling_forward
-
-        # Wrap all FPS adapters with alignment scaling
-        for block_idx, block in enumerate(pipeline.transformer.blocks):
-            if hasattr(block, 'fps_adapter') and block.fps_adapter is not None:
-                if block_idx in alignment_ratios:
-                    ratio = alignment_ratios[block_idx]
-                    logging.info(f"  Block {block_idx}: Applying scale ratio {ratio:.4f}")
-
-                    # Save original forward
-                    original_forward = block.fps_adapter.forward
-
-                    # Create scaling wrapper with bound self
-                    scaling_forward = make_scaling_forward(original_forward, block_idx, ratio)
-                    scaling_forward.__self__ = block.fps_adapter  # Bind module
-
-                    # Replace forward
-                    block.fps_adapter.forward = scaling_forward
-
-                    # Store for cleanup
-                    alignment_hooks.append((block.fps_adapter, original_forward))
-
-        logging.info(f"  Applied alignment to {len(alignment_hooks)} FPS adapter blocks")
-
+    
     # Initialize latents
     vae_stride = [4, 8, 8]
     target_shape = (16, frames // vae_stride[0], size[1] // vae_stride[1], size[0] // vae_stride[2])
@@ -800,62 +630,18 @@ def save_video_result(tensor, fps, prompt_short, output_dir, size):
     
     return filepath
 
-def run_fps_experiments(pipeline, config, base_prompt, n_prompt, fps_values, output_dir, force_gate_one=False, use_alignment=False, **generation_kwargs):
+def run_fps_experiments(pipeline, config, base_prompt, n_prompt, fps_values, output_dir, force_gate_one=False, **generation_kwargs):
     """Runs multiple FPS conditioning experiments."""
     logging.info("🧪 Starting FPS conditioning experiments...")
     logging.info(f"  FPS values to test: {fps_values}")
     logging.info(f"  Base prompt: {base_prompt}")
-
-    if use_alignment:
-        logging.info("🔧 Alignment mode enabled: Will calibrate magnitude ratios")
-
+    
     os.makedirs(output_dir, exist_ok=True)
-
-    # Run calibration if alignment is enabled
-    alignment_ratios = None
-    if use_alignment:
-        # Use first FPS value for calibration
-        calibration_fps = fps_values[0]
-        logging.info(f"Running calibration with FPS={calibration_fps}...")
-        alignment_ratios = calibrate_alignment_ratios(
-            pipeline=pipeline,
-            config=config,
-            prompt=base_prompt,
-            n_prompt=n_prompt,
-            fps=calibration_fps,
-            **generation_kwargs
-        )
-
-        # Check if calibration was successful
-        if not alignment_ratios:
-            logging.warning("⚠️  Calibration returned empty ratios - alignment will be disabled")
-            logging.warning("   This happens when the checkpoint has NO base LoRA parameters")
-            logging.warning("   Continuing with regular fps_only inference (no alignment)")
-            alignment_ratios = None
-        else:
-            # Calibration successful - now remove base LoRA for fps_only inference
-            logging.info("🔧 Removing base LoRA parameters for fps_only inference...")
-            print("\n🔧 Removing base LoRA parameters for fps_only inference...", flush=True)
-            base_lora_removed = 0
-            for name, param in pipeline.transformer.named_parameters():
-                if '.lora_' in name and 'fps' not in name:
-                    param.data.zero_()
-                    base_lora_removed += 1
-            logging.info(f"   Removed {base_lora_removed} base LoRA parameters")
-            print(f"   Removed {base_lora_removed} base LoRA parameters", flush=True)
-            logging.info("   Inference will now use FPS adapters only with alignment scaling")
-            print("   Inference will now use FPS adapters only with alignment scaling\n", flush=True)
-
+    
     results = []
-
-    if alignment_ratios:
-        print(f"\n{'='*80}", flush=True)
-        print(f"🎬 STARTING INFERENCE with alignment enabled ({len(alignment_ratios)} blocks)", flush=True)
-        print(f"{'='*80}\n", flush=True)
-
+    
     for i, fps in enumerate(fps_values, 1):
         logging.info(f"\n--- Experiment {i}/{len(fps_values)}: FPS = {fps} ---")
-        print(f"\n--- Experiment {i}/{len(fps_values)}: FPS = {fps} ---", flush=True)
         
         try:
             # Generate video
@@ -866,7 +652,6 @@ def run_fps_experiments(pipeline, config, base_prompt, n_prompt, fps_values, out
                 n_prompt=n_prompt,
                 fps=fps,
                 force_gate_one=force_gate_one,
-                alignment_ratios=alignment_ratios,  # Pass alignment ratios if calibrated
                 **generation_kwargs
             )
             
@@ -965,13 +750,54 @@ def validate_base_lora_config(config):
     
     logging.info("✅ Config validation passed: Base LoRA parameters found in configuration")
 
+def load_prompts_from_folder(folder_path):
+    """
+    Load prompts from text files in a folder.
+
+    Args:
+        folder_path: Path to folder containing .txt files with prompts
+
+    Returns:
+        List of (prompt_id, prompt_text) tuples
+    """
+    from pathlib import Path
+
+    folder = Path(folder_path)
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(f"Prompt folder does not exist or is not a directory: {folder_path}")
+
+    prompts = []
+    txt_files = sorted(folder.glob('*.txt'))
+
+    if not txt_files:
+        raise ValueError(f"No .txt files found in prompt folder: {folder_path}")
+
+    logging.info(f"\n📝 Loading prompts from folder: {folder_path}")
+    for txt_file in txt_files:
+        try:
+            with open(txt_file, 'r', encoding='utf-8') as f:
+                prompt_text = f.read().strip()
+                if prompt_text:  # Skip empty files
+                    prompts.append((txt_file.stem, prompt_text))
+                    logging.info(f"  ✓ Loaded '{txt_file.stem}': {prompt_text[:60]}...")
+        except Exception as e:
+            logging.warning(f"  ✗ Failed to read {txt_file.name}: {e}")
+
+    if not prompts:
+        raise ValueError(f"No valid prompts loaded from folder: {folder_path}")
+
+    logging.info(f"📝 Total: {len(prompts)} prompts loaded\n")
+    return prompts
+
+
 def main():
     parser = argparse.ArgumentParser(description='Multi-FPS experiment script - TOML-aligned')
     parser.add_argument('--config', required=True, help='Path to TOML configuration file')
     parser.add_argument('--checkpoint', required=True, help='Path to FPS checkpoint')
     parser.add_argument('--output_dir', default='./fps_experiments_align', help='Output directory')
     parser.add_argument('--fps_values', nargs='+', type=float, default=[12, 24, 60], help='FPS values to test')
-    parser.add_argument('--prompt', default='A cat walking through a beautiful garden', help='Generation prompt')
+    parser.add_argument('--prompt', default=None, help='Generation prompt (single string)')
+    parser.add_argument('--prompt_folder', default=None, help='Folder containing .txt files with prompts (alternative to --prompt)')
     parser.add_argument('--negative_prompt', default='', help='Negative prompt (optional)')
     parser.add_argument('--steps', type=int, default=15, help='Denoising steps')
     parser.add_argument('--frames', type=int, default=33, help='Number of frames')
@@ -983,26 +809,18 @@ def main():
     parser.add_argument('--force_gate_one', action='store_true', help='🔧 DIAGNOSTIC: Force all FPS adapter gates to 1.0 for maximum FPS impact')
     parser.add_argument('--fps_only', action='store_true', help='Load only FPS-related parameters from checkpoint (ignore base LoRA)')
     parser.add_argument('--base_only', action='store_true', help='Load only base LoRA parameters from checkpoint (ignore FPS parameters)')
-    parser.add_argument('--align', action='store_true', help='Enable magnitude alignment for fps_only mode: scales y_fps by (||y_text||_clean / ||y_text||_with_lora) per block')
-    
+
     args = parser.parse_args()
-    
+
+    # Validate prompt arguments
+    if args.prompt is None and args.prompt_folder is None:
+        parser.error("Either --prompt or --prompt_folder must be provided")
+    if args.prompt is not None and args.prompt_folder is not None:
+        parser.error("--prompt and --prompt_folder are mutually exclusive. Choose one.")
+
     # Validate selective loading arguments
     if args.fps_only and args.base_only:
         parser.error("--fps_only and --base_only are mutually exclusive. Choose one or neither.")
-
-    # Validate alignment requirements
-    if args.align and not args.fps_only:
-        parser.error("--align requires --fps_only mode. Alignment is designed to fix signal strength mismatch in fps_only inference.")
-
-    # Warn about alignment with fps-only checkpoints
-    if args.align:
-        logging.warning("⚠️  IMPORTANT: --align only works if your checkpoint was trained WITH base LoRA.")
-        logging.warning("   If the checkpoint was trained with fps_only, alignment will have no effect (ratios = 1.0).")
-        logging.warning("   Alignment compensates for removing base LoRA during inference, not for absence of base LoRA in training.")
-
-    # DEBUG: Print args to verify flags are set
-    print(f"DEBUG: args.fps_only={args.fps_only}, args.align={args.align}, args.base_only={args.base_only}")
     
     try:
         # Setup
@@ -1013,31 +831,19 @@ def main():
         pipeline, config = load_pipeline_from_toml(args.config)
         
         # Validate selective loading requirements
-        if args.fps_only and not args.align:
+        if args.fps_only:
             validate_fps_config(config)
             logging.info("🎯 FPS-ONLY MODE: Will load only FPS-related parameters")
-        elif args.fps_only and args.align:
-            validate_fps_config(config)
-            logging.info("🎯 FPS-ONLY + ALIGN MODE: Loading FULL checkpoint for calibration")
-            logging.info("   Will load base LoRA + FPS for calibration, then remove base LoRA for inference")
         elif args.base_only:
             validate_base_lora_config(config)
             logging.info("🎯 BASE-ONLY MODE: Will load only base LoRA parameters")
-
+        
         # Apply checkpoint
-        # Special case: if both fps_only and align are set, load FULL checkpoint first
         logging.info("Applying checkpoint...")
+        # Get base LoRA rank from TOML config or default
         base_rank = config.get('adapter', {}).get('rank', 32)
-
-        if args.fps_only and args.align:
-            # Load FULL checkpoint (base LoRA + FPS) for calibration
-            logging.info("  Loading FULL checkpoint (base LoRA + FPS) for alignment calibration...")
-            pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=base_rank,
-                                       fps_only=False, base_only=False, config=config)
-        else:
-            # Normal loading with selective filtering
-            pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=base_rank,
-                                       fps_only=args.fps_only, base_only=args.base_only, config=config)
+        pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=base_rank,
+                                   fps_only=args.fps_only, base_only=args.base_only, config=config)
         
         # SUBTASK 2: Use TOML parameters for inference settings (with CLI overrides)
         # Extract inference parameters from TOML config or use defaults
@@ -1050,28 +856,66 @@ def main():
         logging.info(f"  CFG scale: {scale}")
         logging.info(f"  Steps: {args.steps}")
         logging.info(f"  Frames: {args.frames}")
-        logging.info(f"  Prompt: '{args.prompt}'")
         logging.info(f"  Negative prompt: '{args.negative_prompt}'")
-        
-        # Run experiments
-        results = run_fps_experiments(
-            pipeline=pipeline,
-            config=config,  # Pass TOML config for proper dtype handling
-            base_prompt=args.prompt,
-            n_prompt=args.negative_prompt,  # Use provided negative prompt or empty string
-            fps_values=args.fps_values,
-            output_dir=args.output_dir,
-            seed=args.seed,
-            steps=args.steps,
-            frames=args.frames,
-            size=(width, height),
-            scale=scale,
-            shift=3.0,
-            force_gate_one=args.force_gate_one,
-            use_alignment=args.align  # Enable alignment if --align flag is set
-        )
-        
-        logging.info(f"\n🎉 All experiments complete! Results saved to: {args.output_dir}")
+
+        # Prepare prompts list
+        if args.prompt_folder:
+            # Load multiple prompts from folder
+            prompts = load_prompts_from_folder(args.prompt_folder)
+        else:
+            # Single prompt from command line
+            prompts = [("single", args.prompt)]
+            logging.info(f"  Prompt: '{args.prompt}'")
+
+        # Run experiments for each prompt
+        all_results = []
+        for prompt_idx, (prompt_id, prompt_text) in enumerate(prompts, 1):
+            if len(prompts) > 1:
+                logging.info(f"\n{'='*80}")
+                logging.info(f"PROCESSING PROMPT {prompt_idx}/{len(prompts)}: {prompt_id}")
+                logging.info(f"{'='*80}")
+                logging.info(f"Prompt text: {prompt_text}")
+
+            # Create subdirectory for this prompt if using multiple prompts
+            if len(prompts) > 1:
+                prompt_output_dir = os.path.join(args.output_dir, prompt_id)
+            else:
+                prompt_output_dir = args.output_dir
+
+            # Run experiments for this prompt
+            results = run_fps_experiments(
+                pipeline=pipeline,
+                config=config,  # Pass TOML config for proper dtype handling
+                base_prompt=prompt_text,
+                n_prompt=args.negative_prompt,  # Use provided negative prompt or empty string
+                fps_values=args.fps_values,
+                output_dir=prompt_output_dir,
+                seed=args.seed,
+                steps=args.steps,
+                frames=args.frames,
+                size=(width, height),
+                scale=scale,
+                shift=3.0,
+                force_gate_one=args.force_gate_one
+            )
+
+            all_results.append({
+                'prompt_id': prompt_id,
+                'prompt_text': prompt_text,
+                'results': results,
+                'output_dir': prompt_output_dir
+            })
+
+            logging.info(f"✅ Prompt '{prompt_id}' complete!")
+
+        # Final summary
+        logging.info(f"\n{'='*80}")
+        logging.info(f"🎉 ALL EXPERIMENTS COMPLETE!")
+        logging.info(f"{'='*80}")
+        logging.info(f"Total prompts processed: {len(prompts)}")
+        logging.info(f"Total videos generated: {sum(len(r['results']) for r in all_results)}")
+        logging.info(f"Output directory: {args.output_dir}")
+        logging.info(f"{'='*80}\n")
         
     except Exception as e:
         logging.error(f"❌ Script failed: {e}")

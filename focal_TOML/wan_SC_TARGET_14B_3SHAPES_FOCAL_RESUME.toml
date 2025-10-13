@@ -6,13 +6,13 @@
 
 # Output path for training runs. Each training run makes a new directory in here.
 output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
-train_name = 'FPS_SHAPES_BLUR'
+train_name = '3SHAPES_Focal'
 
 # Dataset config file.
-dataset = '/root/workspace/sc-diffusion-pipe/MY_TOML/dataset_SC_TARGET_SHAPE_SINGLE_VID_NEW.toml'
+dataset = '/root/workspace/sc-diffusion-pipe/focal_TOML/dataset_SC_TARGET_3SHAPES_FOCAL.toml'
 
 # training settings
-
+init_from_existing =  '/root/workspace/sc-diffusion-pipe/checkpoints/20251008_00-31-25/epoch500'
 # I usually set this to a really high value because I don't know how long I want to train.
 epochs = 1000
 # Batch size of a single forward/backward pass for one GPU.
@@ -76,7 +76,8 @@ timestep_sample_method = 'logit_normal'
 # ========== EXTREME FPS TESTING WITH RMSNORM ==========
 # SubTask 1: Stronger time embedding initialization (τ = 0.1)
 fps_tau_transform = "raw"                        # NEW: configurable transform
-fps_tau_scale = 1.0                        # NEW: configurable scale
+fps_tau_scale = 1.0                                # NEW: configurable scale
+fps_reference_fps = 65                           # NEW: reference FPS for tau computation (changed from default 240.0)
 # SubTask 2: Configurable number of adapter tokens  
 fps_adapter_num_tokens = 4                       # Number of adapter tokens (was hardcoded to 5)
 
@@ -127,6 +128,7 @@ type = 'lora'
 rank = 32
 # Dtype for the LoRA weights you are training.
 dtype = 'bfloat16'
+freeze_base_lora = true
 
 [optimizer]
 # AdamW from the optimi library is a good default since it automatically uses Kahan summation when training bfloat16 weights.

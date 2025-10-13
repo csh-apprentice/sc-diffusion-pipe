@@ -6,7 +6,19 @@ nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_MOUTAIN_FLOWER.toml' > ./output/temp_nohup_log/temp_mf_all_104.out 2>&1 &
 
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_BALL_KITCHEN.toml' > ./output/bokeh_nohup_log/ball_kitchen.out 2>&1 &
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_2DSHAPE_TEMP_all.toml' > ./output/temp_nohup_log/temp_2dshape_temp_all.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_SHAPE_TEMP_REDBLUEWHITE_ALL.toml' > ./output/temp_nohup_log/temp_redbluewhite_all.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config focal_TOML/wan_SC_TARGET_14B_3SHAPES_FOCAL_ALL_RESUME.toml' > ./output/focal_nohup_log/focal_threeshapes_all_resume.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_SYN3SHAPES_ALL.toml' > ./output/bokeh_nohup_log/syn3shapes_bokeh_center_all.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_HUMAN_HOUSE_EMPTY.toml' > ./output/bokeh_nohup_log/humanhouse_bokeh_center_empty.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config focal_TOML/wan_SC_TARGET_14B_3SHAPES_FOCAL_RESUME.toml' > ./output/focal_nohup_log/3shapes_focal_resume.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_3SHAPES_LOWRANK.toml' > ./output/bokeh_nohup_log/3shapes_bokeh_lowrank.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_HUMAN_SOFTPLUS.toml' > ./output/bokeh_nohup_log/human_softplus.out 2>&1 &
 
@@ -139,6 +151,12 @@ python resize_image.py \
   --width  512\
   --height 364
 
+python resize_image.py \
+  --input /root/workspace/BokehMe/DPT/input/syn3shapes.png \
+  --output /root/workspace/BokehMe/DPT/input/syn3shapes_resize.png \
+  --width  640 \
+  --height 462
+
 
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_EXTREME_TEST.toml' > ./output/nohup_log/fix_gate_test.out 2>&1 &
@@ -157,3 +175,33 @@ ssh -L 7007:127.0.0.1:7007 shihanc-shuttercontrol.workbench.prod.netflix.net
 python make_palette_2x2.py \
   --out four_colors.png \
   --colors "#FF0000,#00FF00,#0000FF,#FFFF00"
+
+
+
+python generate_synthetic_blur_dataset_multi.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes_blur/debug \
+  --modes video \
+  --samples_per_scale 1 \
+  --num_frames 8 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_obj 1 \
+  --max_objs 1 \
+  --seed 42 \
+  --caption_relations 
+
+
+python generate_synthetic_blur_dataset_full_random.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes_blur/9s8f \
+  --modes video \
+  --num_scales 9 \
+  --samples_per_scale 1 \
+  --num_frames 8 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_obj 1 \
+  --max_objs 3 \
+  --seed 42 \
+  --caption_relations 

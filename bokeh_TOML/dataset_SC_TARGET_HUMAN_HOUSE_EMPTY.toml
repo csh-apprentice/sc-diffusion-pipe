@@ -1,6 +1,6 @@
 
 # Resolutions to train on, given as the side length of a square image. You can have multiple sizes here.
-resolutions = [512]
+resolutions = [500]
 
 # Enable aspect ratio bucketing.
 enable_ar_bucket = true
@@ -18,7 +18,7 @@ frame_buckets = [1, 33, 65, 87]
 [[directory]]
 # Path to directory of images/videos, and corresponding caption files. The caption files should match the media file name, but with a .txt extension.
 # A missing caption file will log a warning, but then just train using an empty caption.
-path = "/root/workspace/sc-diffusion-pipe/dataset/redbluewhite"
+path = "/root/workspace/sc-diffusion-pipe/dataset/human_house_empty"
 num_repeats = 10
 
 # [[directory]]

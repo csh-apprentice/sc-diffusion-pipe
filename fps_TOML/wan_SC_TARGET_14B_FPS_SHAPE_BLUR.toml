@@ -6,7 +6,7 @@
 
 # Output path for training runs. Each training run makes a new directory in here.
 output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
-train_name = 'FPS_SHAPES_BLUR'
+train_name = 'FPS_SHAPES_SINGLE_VID_NEW'
 
 # Dataset config file.
 dataset = '/root/workspace/sc-diffusion-pipe/MY_TOML/dataset_SC_TARGET_SHAPE_SINGLE_VID_NEW.toml'
@@ -40,7 +40,7 @@ eval_gradient_accumulation_steps = 1
 # misc settings
 
 # Probably want to set this a bit higher if you have a smaller dataset so you don't end up with a million saved models.
-save_every_n_epochs = 25
+save_every_n_epochs = 10
 save_every_n_steps = 1000  # Save more frequently for testing
 # Can checkpoint the training state every n number of epochs or minutes. Set only one of these. You can resume from checkpoints using the --resume_from_checkpoint flag.
 #checkpoint_every_n_epochs = 1
@@ -75,7 +75,7 @@ timestep_sample_method = 'logit_normal'
 
 # ========== EXTREME FPS TESTING WITH RMSNORM ==========
 # SubTask 1: Stronger time embedding initialization (τ = 0.1)
-fps_tau_transform = "raw"                        # NEW: configurable transform
+fps_tau_transform = "log1p"                        # NEW: configurable transform
 fps_tau_scale = 1.0                        # NEW: configurable scale
 # SubTask 2: Configurable number of adapter tokens  
 fps_adapter_num_tokens = 4                       # Number of adapter tokens (was hardcoded to 5)

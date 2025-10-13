@@ -6,15 +6,15 @@
 
 # Output path for training runs. Each training run makes a new directory in here.
 output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
-train_name = 'FPS_SHAPES_BLUR'
+train_name = 'SYN3SHAPES_BOKEH'
 
 # Dataset config file.
-dataset = '/root/workspace/sc-diffusion-pipe/MY_TOML/dataset_SC_TARGET_SHAPE_SINGLE_VID_NEW.toml'
+dataset = '/root/workspace/sc-diffusion-pipe/bokeh_TOML/dataset_SC_TARGET_SYN3SHAPES.toml'
 
 # training settings
 
 # I usually set this to a really high value because I don't know how long I want to train.
-epochs = 1000
+epochs = 2000
 # Batch size of a single forward/backward pass for one GPU.
 micro_batch_size_per_gpu = 1
 # Pipeline parallelism degree. A single instance of the model is divided across this many GPUs.
@@ -40,7 +40,7 @@ eval_gradient_accumulation_steps = 1
 # misc settings
 
 # Probably want to set this a bit higher if you have a smaller dataset so you don't end up with a million saved models.
-save_every_n_epochs = 25
+save_every_n_epochs = 50
 save_every_n_steps = 1000  # Save more frequently for testing
 # Can checkpoint the training state every n number of epochs or minutes. Set only one of these. You can resume from checkpoints using the --resume_from_checkpoint flag.
 #checkpoint_every_n_epochs = 1
@@ -75,8 +75,9 @@ timestep_sample_method = 'logit_normal'
 
 # ========== EXTREME FPS TESTING WITH RMSNORM ==========
 # SubTask 1: Stronger time embedding initialization (τ = 0.1)
-fps_tau_transform = "raw"                        # NEW: configurable transform
-fps_tau_scale = 1.0                        # NEW: configurable scale
+fps_tau_transform = "centerlog1p"                        # NEW: configurable transform
+fps_tau_scale = 1.0                                # NEW: configurable scale
+fps_reference_fps = 16                           # NEW: reference FPS for tau computation (changed from default 240.0)
 # SubTask 2: Configurable number of adapter tokens  
 fps_adapter_num_tokens = 4                       # Number of adapter tokens (was hardcoded to 5)
 
@@ -117,7 +118,7 @@ fps_gate_fixed_value = 0.5                        # NEW: Fixed gate value when f
 
 # Core FPS adapter settings
 fps_adapter_rank = 32                             # Higher LoRA rank for FPS adapters
-fps_condition_blocks = "deepest_third"            # Apply to deepest third of transformer blocks
+fps_condition_blocks = "all"            # Apply to deepest third of transformer blocks
 
 # NO [adapter] block - This enables FPS-ONLY training
 # The absence of this block means no base LoRA will be trained

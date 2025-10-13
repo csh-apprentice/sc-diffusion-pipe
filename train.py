@@ -595,6 +595,73 @@ if __name__ == '__main__':
     if fps_mlp_params_fixed > 0 or fps_adapter_params_fixed > 0:
         print(f'[FPS_FIX] Had to re-enable gradients for {fps_mlp_params_fixed} FPS MLP + {fps_adapter_params_fixed} FPS adapter parameters')
 
+    # CRITICAL FIX: Reload FPS adapters into pipeline model after pipeline creation
+    # The pipeline model has NEW FPS adapter instances that need to be loaded from checkpoint
+    if loaded_checkpoint_info and init_from_existing and loaded_checkpoint_info.get('has_fps_adapter'):
+        if is_main_process():
+            print(f"\n[RESUME_FIX] Reloading FPS adapters into pipeline model...")
+            print(f"[RESUME_FIX] Loading from: {init_from_existing}")
+
+        # Load FPS adapters from checkpoint into pipeline model
+        import safetensors
+        from pathlib import Path
+
+        checkpoint_dir = Path(init_from_existing)
+        if checkpoint_dir.is_dir():
+            safetensors_files = list(checkpoint_dir.glob('*.safetensors'))
+            if safetensors_files:
+                checkpoint_file = safetensors_files[0]
+                checkpoint = safetensors.torch.load_file(str(checkpoint_file))
+
+                # Build a mapping from checkpoint keys to values
+                # Strip 'diffusion_model.' prefix if present
+                fps_checkpoint_params = {}
+                for k, v in checkpoint.items():
+                    if 'fps_conditioning' in k or 'fps_adapter' in k:
+                        if k.startswith('diffusion_model.'):
+                            k = k.replace('diffusion_model.', '', 1)
+                        fps_checkpoint_params[k] = v
+
+                # Match parameters by name suffix (e.g., 'blocks.27.fps_adapter.k_fps_up.weight')
+                # and load them into the pipeline model
+                params_loaded = 0
+                params_mismatched = 0
+
+                for pipeline_name, pipeline_param in pipeline_model.named_parameters():
+                    # Check if this is an FPS parameter
+                    if 'fps_conditioning' in pipeline_name or 'fps_adapter' in pipeline_name:
+                        # Try to find matching checkpoint parameter
+                        # The pipeline name might be like '_module_1.block.fps_adapter.k_fps_up.weight'
+                        # and checkpoint name might be 'blocks.27.fps_adapter.k_fps_up.weight'
+
+                        # Extract the fps_adapter/fps_conditioning part onwards
+                        if 'fps_adapter' in pipeline_name:
+                            suffix_start = pipeline_name.find('fps_adapter')
+                        elif 'fps_conditioning' in pipeline_name:
+                            suffix_start = pipeline_name.find('fps_conditioning')
+                        else:
+                            continue
+
+                        suffix = pipeline_name[suffix_start:]
+
+                        # Find checkpoint param with matching suffix
+                        matched_value = None
+                        for ckpt_name, ckpt_value in fps_checkpoint_params.items():
+                            if ckpt_name.endswith(suffix):
+                                matched_value = ckpt_value
+                                break
+
+                        if matched_value is not None:
+                            pipeline_param.data.copy_(matched_value)
+                            params_loaded += 1
+                        else:
+                            params_mismatched += 1
+
+                if is_main_process():
+                    print(f"[RESUME_FIX] Loaded {params_loaded} FPS parameters into pipeline model")
+                    if params_mismatched > 0:
+                        print(f"[RESUME_FIX] WARNING: {params_mismatched} FPS parameters not found in checkpoint")
+
     # RESUME WORKFLOW: Freeze loaded parameters based on explicit config options
     # This runs for both top-level and adapter-level init_from_existing
     # Backward compatible: defaults (all freeze=False) match old behavior + add reinitialization
@@ -970,20 +1037,121 @@ if __name__ == '__main__':
     
     # --- Re-apply FPS initialization for pipeline parallel ---
     # In pipeline parallel mode, we need to re-initialize through the pipeline module
-    print("\n[FPS_INIT] Re-initializing FPS parameters after DeepSpeed...")
-    fps_mlp_reinitialized = 0
-    fps_adapter_reinitialized = 0
-    
-    for name, module in model_engine.module.named_modules():
-        if 'fps_conditioning' in name and hasattr(module, '_init_weights'):
-            module._init_weights()
-            fps_mlp_reinitialized += 1
-        elif 'fps_adapter' in name and hasattr(module, '_init_lora_weights'):
-            module._init_lora_weights()
-            fps_adapter_reinitialized += 1
-    
-    print(f"[FPS_INIT] Re-initialized {fps_mlp_reinitialized} FPS MLP modules")
-    print(f"[FPS_INIT] Re-initialized {fps_adapter_reinitialized} FPS adapter modules")
+    # BUT: Skip this if we loaded FPS parameters from checkpoint!
+    skip_fps_reinit = loaded_checkpoint_info and init_from_existing and (
+        loaded_checkpoint_info.get('has_fps_adapter') or loaded_checkpoint_info.get('has_fps_mlp')
+    )
+
+    if not skip_fps_reinit:
+        print("\n[FPS_INIT] Re-initializing FPS parameters after DeepSpeed...")
+        fps_mlp_reinitialized = 0
+        fps_adapter_reinitialized = 0
+
+        for name, module in model_engine.module.named_modules():
+            if 'fps_conditioning' in name and hasattr(module, '_init_weights'):
+                module._init_weights()
+                fps_mlp_reinitialized += 1
+            elif 'fps_adapter' in name and hasattr(module, '_init_lora_weights'):
+                module._init_lora_weights()
+                fps_adapter_reinitialized += 1
+
+        print(f"[FPS_INIT] Re-initialized {fps_mlp_reinitialized} FPS MLP modules")
+        print(f"[FPS_INIT] Re-initialized {fps_adapter_reinitialized} FPS adapter modules")
+    else:
+        print("\n[FPS_INIT] Skipping FPS reinitialization (loaded from checkpoint)")
+
+        # CRITICAL FIX: Load FPS parameters into DeepSpeed model AFTER initialization
+        # The model state was copied during deepspeed.initialize(), so we need to load again
+        if is_main_process():
+            print(f"\n[RESUME_FIX_V2] Reloading FPS adapters into DeepSpeed model...")
+            print(f"[RESUME_FIX_V2] Loading from: {init_from_existing}")
+
+        from pathlib import Path
+        checkpoint_dir = Path(init_from_existing)
+        if checkpoint_dir.is_dir():
+            safetensors_files = list(checkpoint_dir.glob('*.safetensors'))
+            if safetensors_files:
+                checkpoint_file = safetensors_files[0]
+                checkpoint = safetensors.torch.load_file(str(checkpoint_file))
+
+                # Build a mapping from checkpoint keys to values
+                fps_checkpoint_params = {}
+                for k, v in checkpoint.items():
+                    if 'fps_conditioning' in k or 'fps_adapter' in k:
+                        if k.startswith('diffusion_model.'):
+                            k = k.replace('diffusion_model.', '', 1)
+                        fps_checkpoint_params[k] = v
+
+                # Load into DeepSpeed model engine's module
+                params_loaded = 0
+                params_mismatched = 0
+
+                for pipeline_name, pipeline_param in model_engine.module.named_parameters():
+                    if 'fps_conditioning' in pipeline_name or 'fps_adapter' in pipeline_name:
+                        # Extract block number and parameter name from pipeline name
+                        # Pipeline name might be like: '_module_1.block.fps_adapter.k_fps_down.weight'
+                        # Checkpoint name is like: 'blocks.27.fps_adapter.k_fps_down.weight'
+
+                        # Try to extract block number from pipeline name
+                        import re
+                        # Look for patterns like 'block' followed by index in module path
+                        # The actual block number is encoded in the layer structure
+
+                        # For now, match by extracting the FPS param name and trying to find
+                        # corresponding checkpoint params by trying different block numbers
+                        if 'fps_adapter' in pipeline_name:
+                            param_suffix = pipeline_name[pipeline_name.find('fps_adapter'):]
+                        elif 'fps_conditioning' in pipeline_name:
+                            param_suffix = pipeline_name[pipeline_name.find('fps_conditioning'):]
+                        else:
+                            continue
+
+                        # Try to find the exact match by looking at all checkpoint params
+                        # that end with this suffix, and match based on order
+                        matched_value = None
+
+                        # Get all checkpoint params with this suffix
+                        matching_ckpt_params = []
+                        for ckpt_name, ckpt_value in fps_checkpoint_params.items():
+                            if ckpt_name.endswith(param_suffix):
+                                # Extract block number from checkpoint name
+                                block_match = re.search(r'blocks\.(\d+)\.', ckpt_name)
+                                block_num = int(block_match.group(1)) if block_match else -1
+                                matching_ckpt_params.append((block_num, ckpt_name, ckpt_value))
+
+                        if matching_ckpt_params:
+                            # Sort by block number
+                            matching_ckpt_params.sort(key=lambda x: x[0])
+
+                            # Try to determine which block this pipeline param belongs to
+                            # by looking at its position in the module hierarchy
+                            # For now, let's try to extract layer/module index from pipeline name
+                            layer_match = re.search(r'_module_(\d+)|layer.?(\d+)|\.(\d+)\.', pipeline_name)
+
+                            # If we can't determine the exact block, we need a different strategy
+                            # Let's count FPS adapter params seen so far to determine index
+                            if not hasattr(model_engine, '_fps_param_counter'):
+                                model_engine._fps_param_counter = {}
+
+                            # Use param suffix as key to track which occurrence this is
+                            if param_suffix not in model_engine._fps_param_counter:
+                                model_engine._fps_param_counter[param_suffix] = 0
+
+                            idx = model_engine._fps_param_counter[param_suffix]
+                            if idx < len(matching_ckpt_params):
+                                matched_value = matching_ckpt_params[idx][2]
+                                model_engine._fps_param_counter[param_suffix] += 1
+
+                        if matched_value is not None:
+                            pipeline_param.data.copy_(matched_value)
+                            params_loaded += 1
+                        else:
+                            params_mismatched += 1
+
+                if is_main_process():
+                    print(f"[RESUME_FIX_V2] Loaded {params_loaded} FPS parameters into DeepSpeed model")
+                    if params_mismatched > 0:
+                        print(f"[RESUME_FIX_V2] WARNING: {params_mismatched} FPS parameters not found in checkpoint")
     
     # Verify initialization (for adapters that have verify method)
     verified_adapters = 0
