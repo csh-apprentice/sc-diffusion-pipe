@@ -1,0 +1,1 @@
+A glass sphere in the foreground reflects and refracts the background scene, behind it a blue cube and a green cylinder are aligned diagonally on a gray floor under the same lighting.

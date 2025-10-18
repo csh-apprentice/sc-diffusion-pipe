@@ -719,7 +719,15 @@ class InitialLayer(nn.Module):
         # Convert fps values to tau_rel and create conditioning embeddings
         # CRITICAL: Create tensor from x to maintain computation graph consistency
         fps_tensor = x.new_tensor(fps_values, dtype=torch.float32)
-        tau_rel = compute_tau_rel(fps_tensor, reference_fps=self.fps_reference_fps, transform=self.fps_tau_transform, scale=self.fps_tau_scale).unsqueeze(-1)  # Shape: [batch_size, 1] 
+        tau_rel = compute_tau_rel(fps_tensor, reference_fps=self.fps_reference_fps, transform=self.fps_tau_transform, scale=self.fps_tau_scale)
+
+        # Handle shape for single vs multi-condition:
+        # - Single condition: tau_rel shape is [batch_size], need to unsqueeze to [batch_size, 1]
+        # - Multi-condition: tau_rel shape is [batch_size, num_conditions], already correct
+        if tau_rel.ndim == 1:
+            tau_rel = tau_rel.unsqueeze(-1)  # [batch_size] -> [batch_size, 1]
+        # Now tau_rel shape is [batch_size, num_conditions] for both cases
+
         fps_conditioning = self.fps_conditioning(tau_rel)  # Shape: [batch_size, dim]
         
 

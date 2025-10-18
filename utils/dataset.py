@@ -507,27 +507,54 @@ class DirectoryDataset:
             print('Intermediate metadata is not cached. Enumerating all files.')
             
             # Check if we have fps-based folder structure (e.g., 12/clip1.mp4, 24/clip2.mp4, 23.98/clip3.mp4)
+            # NEW: Also support multi-condition folder names (e.g., 12_0.1/clip1.mp4)
             fps_folders = []
             for item in self.path.iterdir():
                 if item.is_dir():
                     try:
-                        # Try to parse as float (supports both int and float values)
+                        # Try to parse as single float (old single-condition format)
                         float(item.name)
                         fps_folders.append(item)
                     except ValueError:
-                        # Not a numeric folder name, skip
-                        continue
-            
+                        # Try to parse as multi-condition (e.g., "12_0.1" -> [12.0, 0.1])
+                        if '_' in item.name:
+                            try:
+                                # Split by underscore and try to parse each part as float
+                                conditions = [float(x) for x in item.name.split('_')]
+                                fps_folders.append(item)
+                            except ValueError:
+                                # Not a valid multi-condition folder name, skip
+                                continue
+                        else:
+                            # Not a numeric folder name, skip
+                            continue
+
             if fps_folders:
-                # FPS-based folder structure detected
-                fps_levels = [float(folder.name) for folder in fps_folders]
-                print(f'[DEBUG] Detected fps-based folder structure with {len(fps_folders)} fps levels: {sorted(fps_levels)}')
+                # FPS-based folder structure detected (single or multi-condition)
+                # Parse each folder name into conditions list
+                def parse_conditions(folder_name):
+                    """Parse folder name into list of conditions. Single condition -> [cond], multi -> [cond1, cond2, ...]"""
+                    if '_' in folder_name:
+                        return [float(x) for x in folder_name.split('_')]
+                    else:
+                        return [float(folder_name)]
+
+                fps_levels = [parse_conditions(folder.name) for folder in fps_folders]
+                num_conditions = len(fps_levels[0]) if fps_levels else 1
+
+                # Verify all folders have the same number of conditions
+                if not all(len(conds) == num_conditions for conds in fps_levels):
+                    raise ValueError(f"Inconsistent number of conditions across folders! Found folders with different condition counts.")
+
+                print(f'[DEBUG] Detected {num_conditions}-condition folder structure with {len(fps_folders)} condition combinations')
+                print(f'[DEBUG] Sample conditions: {sorted(fps_levels)[:5]}')
+
                 files = []
                 for fps_folder in fps_folders:
-                    fps_value = float(fps_folder.name)
+                    fps_value = parse_conditions(fps_folder.name)  # Now a list
                     folder_files = list(fps_folder.glob('*'))
                     folder_files = [f for f in folder_files if f.is_file()]
-                    print(f'[DEBUG] FPS folder {fps_value}: found {len(folder_files)} files')
+                    print(f'[DEBUG] Condition folder {fps_value}: found {len(folder_files)} files')
                     for file in folder_files:
                         if file.is_file():
                             files.append((file, fps_value))

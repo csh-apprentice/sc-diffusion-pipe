@@ -40,6 +40,11 @@ In the mean time, we sample 10*5=50 scenes, which would require 250*50=12500 sam
 2 videos 8 frames * (9+7+5+3+1) 
 2 images *  (9+7+5+3+1)
 
-2*(3+2+1)*(9+7+5+3+1)=2*6*25=300 complexity ~ 8*5=40 hours ~ 2days complexity
+total 6*5=30 scene
 
+2*(3+2+1)*(9+7+5+3+1)=2*6*25=300 complexity 1.887
+
+5:9 (1 day)
+
+6*10*9=540 complexity 3.37
 

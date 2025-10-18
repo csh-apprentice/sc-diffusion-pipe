@@ -2,6 +2,11 @@ Training Command:
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate diffusion-pipe
 
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BLUR_RANDOM.toml' > ./output/fps_nohup_log/fps_shape_blur_random.out 2>&1 &
+
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config shutter_bokeh_TOML/wan_SC_TARGET_14B_2SHAPES_SHUTTER_BOKEH_SYNTHESIS.toml' > ./output/fps_bokeh_log/2dshape_bokeh.out 2>&1 &
+
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_VID_BASEONLY.toml' > ./output/nohup_log/single_video_baseonly_6000.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_MOUTAIN_FLOWER.toml' > ./output/temp_nohup_log/temp_mf_all_104.out 2>&1 &
@@ -193,15 +198,22 @@ python generate_synthetic_blur_dataset_multi.py \
 
 
 python generate_synthetic_blur_dataset_full_random.py \
-  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes_blur/9s8f \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes_blur_random/9s12f \
   --modes video \
   --num_scales 9 \
-  --samples_per_scale 1 \
-  --num_frames 8 \
+  --samples_per_scale 2 \
+  --num_frames 12 \
   --align_img_video \
   --min_speed 1000 \
   --max_speed 1000 \
   --min_obj 1 \
   --max_objs 3 \
-  --seed 42 \
   --caption_relations 
+
+
+python generate_temp_by_scale.py \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/debug \
+  --num_scenes 1 \
+  --num_scales 19 \
+  --white-bg \
+  --k-lo 2000 --k-hi 18000 --k-ref 6000 --preserve-luminance

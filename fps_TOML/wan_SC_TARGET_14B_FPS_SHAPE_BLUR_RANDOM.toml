@@ -6,10 +6,10 @@
 
 # Output path for training runs. Each training run makes a new directory in here.
 output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
-train_name = 'FPS_SHAPES_BLUR'
+train_name = 'FPS_SHAPES_BLUR_RANDOM'
 
 # Dataset config file.
-dataset = '/root/workspace/sc-diffusion-pipe/fps_TOML/dataset_SC_TARGET_SHAPE_BLUR.toml'
+dataset = '/root/workspace/sc-diffusion-pipe/fps_TOML/dataset_SC_TARGET_SHAPE_BLUR_RANDOM.toml'
 
 # training settings
 

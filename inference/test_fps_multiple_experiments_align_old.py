@@ -455,8 +455,15 @@ def generate_video_with_fps(pipeline, config, prompt, n_prompt, fps=60, seed=42,
     uncond_inputs = text_encoder_fn([n_prompt], is_video=True)
     
     # Prepare FPS tensor
-    fps_values = torch.tensor([fps], dtype=torch.float32, device=device)
-    logging.info(f"  FPS tensor: {fps_values.tolist()}")
+    # fps can be a scalar (single-condition) or list (multi-condition)
+    if isinstance(fps, list):
+        # Multi-condition: fps is already a list like [0.5, 0.02]
+        fps_values = torch.tensor([fps], dtype=torch.float32, device=device)  # Shape: [1, num_conditions]
+        logging.info(f"  FPS tensor (multi-condition): {fps_values.tolist()}")
+    else:
+        # Single-condition: fps is a scalar like 12.0
+        fps_values = torch.tensor([fps], dtype=torch.float32, device=device)  # Shape: [1]
+        logging.info(f"  FPS tensor (single-condition): {fps_values.tolist()}")
     
     # 🔍 DEBUG: Check FPS parameters before generation
     logging.info("🔍 FPS parameter status before generation:")
@@ -618,10 +625,18 @@ def save_video_result(tensor, fps, prompt_short, output_dir, size):
     if tensor is None:
         logging.warning("Video tensor is None, skipping save.")
         return None
-        
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     clean_prompt = "".join(c for c in prompt_short if c.isalnum() or c in (' ', '_')).strip()[:30]
-    fps_str = f"{fps:.2f}".replace('.', '_')
+
+    # Handle both scalar and list fps values for filename
+    if isinstance(fps, list):
+        # Multi-condition: join with underscore, e.g., [0.5, 0.02] -> "0_50_0_02"
+        fps_str = '_'.join(f"{v:.2f}" for v in fps).replace('.', '_')
+    else:
+        # Single-condition: e.g., 12.0 -> "12_00"
+        fps_str = f"{fps:.2f}".replace('.', '_')
+
     filename = f"fps_{fps_str}_{clean_prompt.replace(' ', '_')}_{size[0]}x{size[1]}_{timestamp}.mp4"
     filepath = os.path.join(output_dir, filename)
     
@@ -683,15 +698,18 @@ def run_fps_experiments(pipeline, config, base_prompt, n_prompt, fps_values, out
     
     # Analysis
     logging.info(f"\n📊 FPS Conditioning Analysis:")
-    logging.info(f"{'FPS':<6} {'Mean':<10} {'Std':<10} {'Min':<10} {'Max':<10} {'File':<50}")
+    logging.info(f"{'FPS':<15} {'Mean':<10} {'Std':<10} {'Min':<10} {'Max':<10} {'File':<50}")
     logging.info("-" * 100)
     
     successful_results = [r for r in results if 'error' not in r]
     for result in results:
+        # Format FPS value (handle both scalar and list)
+        fps_str = str(result['fps']) if isinstance(result['fps'], list) else f"{result['fps']}"
+
         if 'error' in result:
-            logging.info(f"{result['fps']:<6} ERROR: {result['error']}")
+            logging.info(f"{fps_str:<15} ERROR: {result['error']}")
         else:
-            logging.info(f"{result['fps']:<6} {result['mean']:<10.4f} {result['std']:<10.4f} "
+            logging.info(f"{fps_str:<15} {result['mean']:<10.4f} {result['std']:<10.4f} "
                         f"{result['min']:<10.4f} {result['max']:<10.4f} {os.path.basename(result['file'])}")
     
     # Check if FPS conditioning is working
@@ -790,12 +808,58 @@ def load_prompts_from_folder(folder_path):
     return prompts
 
 
+def parse_fps_values(fps_values_flat, num_conditions):
+    """
+    Parse flat fps_values list into groups based on num_conditions.
+
+    Args:
+        fps_values_flat: Flat list of floats from command line
+        num_conditions: Number of conditions (1 for single, 2+ for multi)
+
+    Returns:
+        List of fps_values, where each element is:
+        - Single-condition: scalar float
+        - Multi-condition: list of floats
+
+    Examples:
+        Single-condition (num_conditions=1):
+            Input: [12.0, 24.0, 60.0]
+            Output: [12.0, 24.0, 60.0]
+
+        Multi-condition (num_conditions=2):
+            Input: [0.5, 0.02, 1.0, 0.05, 0.125, 0.1]
+            Output: [[0.5, 0.02], [1.0, 0.05], [0.125, 0.1]]
+    """
+    if num_conditions == 1:
+        # Single condition: each value is a separate experiment
+        return fps_values_flat
+    else:
+        # Multi-condition: group values into tuples of size num_conditions
+        if len(fps_values_flat) % num_conditions != 0:
+            raise ValueError(
+                f"fps_values length ({len(fps_values_flat)}) must be divisible by "
+                f"num_conditions ({num_conditions}). Got {len(fps_values_flat)} values "
+                f"which doesn't divide evenly into groups of {num_conditions}."
+            )
+
+        grouped = []
+        for i in range(0, len(fps_values_flat), num_conditions):
+            group = fps_values_flat[i:i+num_conditions]
+            grouped.append(group)
+
+        return grouped
+
+
 def main():
     parser = argparse.ArgumentParser(description='Multi-FPS experiment script - TOML-aligned')
     parser.add_argument('--config', required=True, help='Path to TOML configuration file')
     parser.add_argument('--checkpoint', required=True, help='Path to FPS checkpoint')
     parser.add_argument('--output_dir', default='./fps_experiments_align', help='Output directory')
-    parser.add_argument('--fps_values', nargs='+', type=float, default=[12, 24, 60], help='FPS values to test')
+    parser.add_argument('--fps_values', nargs='+', type=float, default=[12, 24, 60],
+                        help='FPS values to test. ' +
+                             'Single-condition: --fps_values 12 24 60 (3 experiments). ' +
+                             'Multi-condition (2): --fps_values 0.5 0.02  1.0 0.05  0.125 0.1 ' +
+                             '(3 experiments with 2 conditions each, values are grouped automatically)')
     parser.add_argument('--prompt', default=None, help='Generation prompt (single string)')
     parser.add_argument('--prompt_folder', default=None, help='Folder containing .txt files with prompts (alternative to --prompt)')
     parser.add_argument('--negative_prompt', default='', help='Negative prompt (optional)')
@@ -829,7 +893,28 @@ def main():
         # Load pipeline using TOML configuration
         logging.info("Loading pipeline from TOML configuration...")
         pipeline, config = load_pipeline_from_toml(args.config)
-        
+
+        # Detect number of conditions from config
+        fps_tau_transform = config.get('model', {}).get('fps_tau_transform', 'log1p')
+        if isinstance(fps_tau_transform, list):
+            num_conditions = len(fps_tau_transform)
+        else:
+            num_conditions = 1
+
+        logging.info(f"📊 Detected {num_conditions}-condition model from config")
+        if num_conditions > 1:
+            logging.info(f"   → Values will be grouped into sets of {num_conditions}")
+
+        # Parse fps_values based on num_conditions
+        fps_values_parsed = parse_fps_values(args.fps_values, num_conditions)
+        logging.info(f"📊 Parsed FPS values from: {args.fps_values}")
+        if num_conditions == 1:
+            logging.info(f"  Single-condition: {fps_values_parsed}")
+        else:
+            logging.info(f"  Multi-condition ({num_conditions} conditions per experiment):")
+            for i, vals in enumerate(fps_values_parsed, 1):
+                logging.info(f"    Experiment {i}: [{', '.join(str(v) for v in vals)}]")
+
         # Validate selective loading requirements
         if args.fps_only:
             validate_fps_config(config)
@@ -888,7 +973,7 @@ def main():
                 config=config,  # Pass TOML config for proper dtype handling
                 base_prompt=prompt_text,
                 n_prompt=args.negative_prompt,  # Use provided negative prompt or empty string
-                fps_values=args.fps_values,
+                fps_values=fps_values_parsed,  # Use parsed fps_values (handles multi-condition)
                 output_dir=prompt_output_dir,
                 seed=args.seed,
                 steps=args.steps,

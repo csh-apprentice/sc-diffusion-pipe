@@ -21,16 +21,22 @@ def compute_tau_rel(
     fps: TensorOrNumber,
     *,
     # If you don't want a reference, pass reference_fps=None (uses tau = 1/fps)
-    reference_fps: Optional[Number] = 240.0,
+    # NEW: Can be a list for multi-condition
+    reference_fps: Optional[Union[Number, list]] = 240.0,
     # Transform to apply to tau (exposure proxy)
-    transform: str = "log1p",          # options: "raw" | "log" | "log1p" | "neglogfps" | "centerlog1p"
+    # NEW: Can be a list for multi-condition
+    transform: Union[str, list] = "log1p",          # options: "raw" | "log" | "log1p" | "neglogfps" | "centerlog1p"
     # Multiplicative scaling (kept as a multiplier, as you prefer)
-    scale: float = 0.33333334,         # ≈ 1/3 → keeps log1p(240/fps) ~ [0, ~3] → [0, ~1]
+    # NEW: Can be a list for multi-condition
+    scale: Union[float, list] = 0.33333334,         # ≈ 1/3 → keeps log1p(240/fps) ~ [0, ~3] → [0, ~1]
     # Numerical stability
     eps: float = 1e-6,
 ) -> TensorOrNumber:
     """
-    Compute a scalar for fps-conditioning.
+    Compute scalar(s) for fps-conditioning.
+
+    NEW: Supports multi-condition input where fps can be a tensor with shape [batch_size, num_conditions].
+    In this case, transform, scale, and reference_fps can be lists with length=num_conditions.
 
     tau_raw = (reference_fps / fps) if reference_fps is not None else (1 / fps)
 
@@ -42,42 +48,122 @@ def compute_tau_rel(
       - "centerlog1p": sign(reference_fps-fps) * log1p(abs(tau-1))  # centered around tau=1
 
     Returns same type as input (torch.Tensor or float/int).
+    For multi-condition, returns tensor with shape [batch_size, num_conditions].
     """
     is_tensor = isinstance(fps, torch.Tensor)
     x = fps.to(torch.float32) if is_tensor else torch.tensor(float(fps), dtype=torch.float32)
 
-    # exposure proxy tau
-    if reference_fps is None:
-        tau = 1.0 / (x + eps)
+    # Check if this is multi-condition (fps has 2 dimensions: [batch, num_conditions])
+    is_multi_condition = is_tensor and x.ndim == 2
+
+    if not is_multi_condition:
+        # Single condition - original behavior (backward compatible)
+        # Ensure transform, scale, reference_fps are scalars
+        if isinstance(transform, list):
+            transform = transform[0]
+        if isinstance(scale, list):
+            scale = scale[0]
+        if isinstance(reference_fps, list):
+            reference_fps = reference_fps[0]
+
+        # transform
+        if transform == "raw":
+            # Raw: return FPS value directly, no transformation
+            y = x
+        elif transform == "neglogfps":
+            # neglogfps: -log(fps), no reference needed
+            y = -torch.log(x + eps)
+        else:
+            # For other transforms, compute tau first
+            if reference_fps is None:
+                tau = 1.0 / (x + eps)
+            else:
+                tau = float(reference_fps) / (x + eps)
+
+            if transform == "log":
+                y = torch.log(tau + eps)
+            elif transform == "log1p":
+                y = torch.log1p(tau)          # smooth & stable for our τ ∈ {1,2,4,6,10,20}
+            elif transform == "centerlog1p":
+                # Centered log1p transform: sign(reference_fps-fps) * log1p(abs(tau-1))
+                # This centers the transform around tau=1 (when fps=reference_fps)
+                if reference_fps is None:
+                    raise ValueError("centerlog1p transform requires reference_fps to be specified")
+                sign_term = torch.sign(float(reference_fps) - x)
+                y = sign_term * torch.log1p(torch.abs(tau - 1.0))
+            else:
+                raise ValueError(f"Unknown transform: {transform}")
+
+        # multiplicative scaling (your preference)
+        if scale is not None:
+            y = y * float(scale)
+
+        if is_tensor:
+            return y
+        return float(y.item())
+
     else:
-        tau = float(reference_fps) / (x + eps)
+        # Multi-condition case: x has shape [batch_size, num_conditions]
+        batch_size, num_conditions = x.shape
 
-    # transform
-    if transform == "raw":
-        y = tau
-    elif transform == "log":
-        y = torch.log(tau + eps)
-    elif transform == "log1p":
-        y = torch.log1p(tau)          # smooth & stable for our τ ∈ {1,2,4,6,10,20}
-    elif transform == "neglogfps":
-        y = -torch.log(x + eps)       # similar behavior; no reference needed
-    elif transform == "centerlog1p":
-        # Centered log1p transform: sign(reference_fps-fps) * log1p(abs(tau-1))
-        # This centers the transform around tau=1 (when fps=reference_fps)
-        if reference_fps is None:
-            raise ValueError("centerlog1p transform requires reference_fps to be specified")
-        sign_term = torch.sign(float(reference_fps) - x)
-        y = sign_term * torch.log1p(torch.abs(tau - 1.0))
-    else:
-        raise ValueError(f"Unknown transform: {transform}")
+        # Ensure transform, scale, reference_fps are lists with correct length
+        if not isinstance(transform, list):
+            transform = [transform] * num_conditions
+        if not isinstance(scale, list):
+            scale = [scale] * num_conditions
+        if not isinstance(reference_fps, list):
+            reference_fps = [reference_fps] * num_conditions
 
-    # multiplicative scaling (your preference)
-    if scale is not None:
-        y = y * float(scale)
+        if len(transform) != num_conditions:
+            raise ValueError(f"transform list length ({len(transform)}) must match num_conditions ({num_conditions})")
+        if len(scale) != num_conditions:
+            raise ValueError(f"scale list length ({len(scale)}) must match num_conditions ({num_conditions})")
+        if len(reference_fps) != num_conditions:
+            raise ValueError(f"reference_fps list length ({len(reference_fps)}) must match num_conditions ({num_conditions})")
 
-    if is_tensor:
+        # Process each condition separately
+        y_list = []
+        for i in range(num_conditions):
+            x_i = x[:, i]  # Shape: [batch_size]
+            ref_fps_i = reference_fps[i]
+            transform_i = transform[i]
+            scale_i = scale[i]
+
+            # Apply transform for this condition
+            if transform_i == "raw":
+                # Raw: return FPS value directly, no transformation
+                y_i = x_i
+            elif transform_i == "neglogfps":
+                # neglogfps: -log(fps), no reference needed
+                y_i = -torch.log(x_i + eps)
+            else:
+                # For other transforms, compute tau first
+                if ref_fps_i is None:
+                    tau_i = 1.0 / (x_i + eps)
+                else:
+                    tau_i = float(ref_fps_i) / (x_i + eps)
+
+                if transform_i == "log":
+                    y_i = torch.log(tau_i + eps)
+                elif transform_i == "log1p":
+                    y_i = torch.log1p(tau_i)
+                elif transform_i == "centerlog1p":
+                    if ref_fps_i is None:
+                        raise ValueError("centerlog1p transform requires reference_fps to be specified")
+                    sign_term = torch.sign(float(ref_fps_i) - x_i)
+                    y_i = sign_term * torch.log1p(torch.abs(tau_i - 1.0))
+                else:
+                    raise ValueError(f"Unknown transform: {transform_i}")
+
+            # Apply scale for this condition
+            if scale_i is not None:
+                y_i = y_i * float(scale_i)
+
+            y_list.append(y_i.unsqueeze(1))  # Shape: [batch_size, 1]
+
+        # Concatenate all conditions: [batch_size, num_conditions]
+        y = torch.cat(y_list, dim=1)
         return y
-    return float(y.item())
 
 
 def sinusoidal_embedding_1d(dim, position):
@@ -298,16 +384,19 @@ class FpsConditioning(nn.Module):
     """
     FPS conditioning module with special initialization for zero-disturbance training.
     SubTask 7: Simplified design matching Wan2.1 time embedding (Linear -> SiLU -> Linear).
+
+    NEW: Supports multi-condition input where num_conditions > 1.
     """
-    def __init__(self, out_dim: int, hidden: int = 64):
+    def __init__(self, out_dim: int, hidden: int = 64, num_conditions: int = 1):
         super().__init__()
-        
-        # Layers: Linear(1, hidden) -> SiLU -> Linear(hidden, out_dim)
+
+        # Layers: Linear(num_conditions, hidden) -> SiLU -> Linear(hidden, out_dim)
         # Removed LayerNorm to prevent weakening of FPS signal at initialization
-        self.lin1 = nn.Linear(1, hidden)
+        # num_conditions defaults to 1 for backward compatibility
+        self.lin1 = nn.Linear(num_conditions, hidden)
         self.act = nn.SiLU()
         self.lin2 = nn.Linear(hidden, out_dim)
-        
+
         # Note: Don't call _init_weights() here - tensors are on meta device
         # Custom initialization will be applied after materialization
     
@@ -864,6 +953,14 @@ class WanModel(ModelMixin, ConfigMixin):
         self.fps_tau_scale = fps_tau_scale
         self.fps_reference_fps = fps_reference_fps
 
+        # Determine number of conditions from fps_tau_transform
+        # If it's a list, its length is the number of conditions
+        # Otherwise, it's a single condition (default behavior)
+        if isinstance(fps_tau_transform, list):
+            num_conditions = len(fps_tau_transform)
+        else:
+            num_conditions = 1
+
         # embeddings
         self.patch_embedding = nn.Conv3d(
             in_dim, dim, kernel_size=patch_size, stride=patch_size)
@@ -874,9 +971,14 @@ class WanModel(ModelMixin, ConfigMixin):
         self.time_embedding = nn.Sequential(
             nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
         self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))
-        
+
         # FPS conditioning encoder with special initialization
-        self.fps_conditioning = FpsConditioning(out_dim=fps_embed_dim, hidden=fps_condition_hidden)
+        # num_conditions parameter allows multi-condition support
+        self.fps_conditioning = FpsConditioning(
+            out_dim=fps_embed_dim,
+            hidden=fps_condition_hidden,
+            num_conditions=num_conditions
+        )
 
         # blocks
         if model_type in ('i2v', 'flf2v'):

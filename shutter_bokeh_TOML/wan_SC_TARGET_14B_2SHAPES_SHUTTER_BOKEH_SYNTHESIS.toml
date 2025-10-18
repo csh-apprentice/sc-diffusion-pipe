@@ -6,10 +6,10 @@
 
 # Output path for training runs. Each training run makes a new directory in here.
 output_dir = '/root/workspace/sc-diffusion-pipe/checkpoints'
-train_name = 'FPS_SHAPES_BLUR'
+train_name = '3SHAPES_BOKEH_SYNTHESIS'
 
 # Dataset config file.
-dataset = '/root/workspace/sc-diffusion-pipe/fps_TOML/dataset_SC_TARGET_SHAPE_BLUR.toml'
+dataset = '/root/workspace/sc-diffusion-pipe/shutter_bokeh_TOML/dataset_SC_TARGET_2SHAPES_SHUTTER_BOKEH_SYNTHESIS.toml'
 
 # training settings
 
@@ -75,13 +75,15 @@ timestep_sample_method = 'logit_normal'
 
 # ========== EXTREME FPS TESTING WITH RMSNORM ==========
 # SubTask 1: Stronger time embedding initialization (τ = 0.1)
-fps_tau_transform = "raw"                        # NEW: configurable transform
-fps_tau_scale = 1.0                        # NEW: configurable scale
+fps_tau_transform = ["centerlog1p","centerlog1p"]                        # NEW: configurable transform
+fps_tau_scale = [1.0,1.0]                                # NEW: configurable scale
+fps_reference_fps = [8.0,0.1]                           # NEW: reference FPS for tau computation (changed from default 240.0)
 # SubTask 2: Configurable number of adapter tokens  
 fps_adapter_num_tokens = 4                       # Number of adapter tokens (was hardcoded to 5)
 
 # SubTask 3: Configurable FPS embedding dimension
-fps_embed_dim = 256                               # FPS MLP output dimension
+# fps_condition_hidden=128
+# fps_embed_dim = 512                               # FPS MLP output dimension
 
 # SubTask 4: Rewritten FPS MLP with proper initialization
 # (Implemented in code - uses new initialization logic)

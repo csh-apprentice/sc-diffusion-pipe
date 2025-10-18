@@ -8,7 +8,7 @@ Key points:
   independent of the shutter control. The shutter exposure window still uses 1/fps_mapped.
 - Accepts --fps_lo/--fps_hi and --num_scales; samples scale s in [-1,1] (stratified),
   maps to concrete fps via centered log mapping (geo-centered at sqrt(lo*hi)).
-- Randomizes background and shape colors, ensuring a minimum perceptual contrast.
+- Randomizes background color with a contrast guard and mentions it in the caption.
 - Writes images/videos and captions into scale-named folders:
   out_root/images/scale_{+/-x.xxx}/..., out_root/videos/scale_{+/-x.xxx}/...
 """
@@ -29,14 +29,28 @@ except Exception as e:
     warnings.warn(f"imageio.v3 not available ({e}); video will be saved as PNG frames.")
 
 # -----------------------
-# Shapes
+# Shapes & palette
 # -----------------------
 
 KINDS = ["circle", "square", "triangle", "star"]
 
+COLOR_PALETTE = [
+    ("red",      (230,  57,  70)),
+    ("green",    ( 87, 187, 138)),
+    ("blue",     ( 69, 123, 157)),
+    ("yellow",   (251, 191,  36)),
+    ("purple",   (139,  92, 246)),
+    ("orange",   (245, 158,  11)),
+    ("teal",     ( 13, 148, 136)),
+    ("pink",     (236,  72, 153)),
+    ("white", (255, 255, 255)),
+]
+
+
 @dataclass
 class Shape:
     kind: str
+    color_name: str
     color_rgb: Tuple[int, int, int]
     x: float
     y: float
@@ -65,14 +79,15 @@ def fps_from_scale(s: float, fps_lo: float, fps_hi: float) -> float:
 # Stratified sampling over [-1,1]
 # -----------------------
 
-def stratified_scales(n: int) -> List[float]:
+def stratified_scales(n: int, seed: Optional[int] = None) -> List[float]:
+    rng = random.Random()
     lo, hi = -1.0, 1.0
     w = (hi - lo) / float(n)
     xs = []
     for i in range(n):
         a = lo + i * w
         b = a + w
-        xs.append(random.uniform(a, b))
+        xs.append(rng.uniform(a, b))
     return xs
 
 # -----------------------
@@ -91,6 +106,7 @@ def star_points(cx: float, cy: float, r_outer: float, inner_ratio: float = 0.5, 
     return pts
 
 def render_shapes_pil(W: int, H: int, shapes: List[Shape], bg_rgb: Tuple[int,int,int]) -> np.ndarray:
+    from PIL import Image, ImageDraw
     canvas = Image.new("RGBA", (W, H), (*bg_rgb, 255))
     draw = ImageDraw.Draw(canvas, "RGBA")
     for s in shapes:
@@ -150,84 +166,65 @@ def sample_scene(W: int,
                  speed_px_s: Tuple[float, float],
                  allow_static: bool,
                  ensure_one_static: bool = False,
-                 static_prob: float = 0.2) -> List[Shape]:
-    n = random.randint(*num_objs_range)
+                 static_prob: float = 0.2,
+                 rng: Optional[random.Random] = None) -> List[Shape]:
+    rng = rng or random
+    n = rng.randint(*num_objs_range)
     shapes: List[Shape] = []
-    static_idx = random.randrange(n) if (allow_static and ensure_one_static) else None
+    used_colors = rng.sample(COLOR_PALETTE, k=min(n, len(COLOR_PALETTE)))
+    static_idx = rng.randrange(n) if (allow_static and ensure_one_static) else None
     margin = 60
     for i in range(n):
-        kind = random.choice(KINDS)
-        color_rgb = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-        size = random.uniform(18, 40)
-        x = random.uniform(margin, W - margin)
-        y = random.uniform(margin, H - margin)
-        speed = random.uniform(*speed_px_s)
-        theta = random.uniform(0, 2 * math.pi)
+        kind = rng.choice(KINDS)
+        cname, crgb = used_colors[i % len(COLOR_PALETTE)]
+        size = rng.uniform(18, 40)
+        x = rng.uniform(margin, W - margin)
+        y = rng.uniform(margin, H - margin)
+        speed = rng.uniform(*speed_px_s)
+        theta = rng.uniform(0, 2 * math.pi)
         vx = speed * math.cos(theta)
         vy = speed * math.sin(theta)
         make_static = False
         if allow_static:
             if ensure_one_static and i == static_idx:
                 make_static = True
-            elif (not ensure_one_static) and (random.random() < static_prob):
+            elif (not ensure_one_static) and (rng.random() < static_prob):
                 make_static = True
         if make_static:
             vx, vy = 0.0, 0.0
-        shapes.append(Shape(kind, color_rgb, x, y, vx, vy, size))
+        shapes.append(Shape(kind, cname, crgb, x, y, vx, vy, size))
     return shapes
 
 def energize_static_shapes(shapes: List[Shape],
                            min_speed: float,
-                           max_speed: float):
+                           max_speed: float,
+                           rng: random.Random):
     for s in shapes:
         if abs(s.vx) + abs(s.vy) <= 1e-6:
-            speed = random.uniform(min_speed, max_speed)
-            theta = random.uniform(0, 2 * math.pi)
+            speed = rng.uniform(min_speed, max_speed)
+            theta = rng.uniform(0, 2 * math.pi)
             s.vx = speed * math.cos(theta)
             s.vy = speed * math.sin(theta)
 
 # -----------------------
-# Background sampling with perceptual contrast guard (CIELAB Delta E)
+# Background sampling with contrast guard
 # -----------------------
 
-def srgb_to_linear(c: int) -> float:
-    c = c / 255.0
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-def rgb_to_xyz(rgb: Tuple[int,int,int]) -> Tuple[float,float,float]:
-    r, g, b = map(srgb_to_linear, rgb)
-    x = r * 0.4124 + g * 0.3576 + b * 0.1805
-    y = r * 0.2126 + g * 0.7152 + b * 0.0722
-    z = r * 0.0193 + g * 0.1192 + b * 0.9505
-    return (x * 100, y * 100, z * 100)
-
-def xyz_to_lab(xyz: Tuple[float,float,float]) -> Tuple[float,float,float]:
-    ref_x, ref_y, ref_z = 95.047, 100.0, 108.883 # D65 illuminant
-    x, y, z = xyz[0] / ref_x, xyz[1] / ref_y, xyz[2] / ref_z
-    def f(t):
-        return t ** (1/3) if t > 0.008856 else (7.787 * t) + (16 / 116)
-    fx, fy, fz = f(x), f(y), f(z)
-    l = (116 * fy) - 16
-    a = 500 * (fx - fy)
-    b = 200 * (fy - fz)
-    return (l, a, b)
-
-def rgb_to_lab(rgb: Tuple[int,int,int]) -> Tuple[float,float,float]:
-    return xyz_to_lab(rgb_to_xyz(rgb))
-
-def delta_e_cie76(lab1: Tuple[float,float,float], lab2: Tuple[float,float,float]) -> float:
-    return math.sqrt((lab1[0] - lab2[0])**2 + (lab1[1] - lab2[1])**2 + (lab1[2] - lab2[2])**2)
+def rgb_delta_rms(a: Tuple[int,int,int], b: Tuple[int,int,int]) -> float:
+    return math.sqrt(((a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2) / 3.0) / 255.0
 
 def choose_background(shapes: List[Shape],
-                      min_delta_e: float = 30.0) -> Tuple[int,int,int]:
-    shape_labs = [rgb_to_lab(s.color_rgb) for s in shapes]
-    for _ in range(100): # Try 100 times to find a contrasting background
-        bg_rgb = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-        bg_lab = rgb_to_lab(bg_rgb)
-        if all(delta_e_cie76(bg_lab, s_lab) >= min_delta_e for s_lab in shape_labs):
-            return bg_rgb
-    warnings.warn("Could not find a background with sufficient contrast; defaulting to white.")
-    return (255, 255, 255) # Default to white if no suitable color is found
+                      bg_palette: List[Tuple[str,Tuple[int,int,int]]],
+                      white_prob: float,
+                      min_rms_diff: float = 0.12,
+                      rng: Optional[random.Random] = None) -> Tuple[str,Tuple[int,int,int]]:
+    rng = rng or random
+    candidates = (COLOR_PALETTE) if rng.random() < white_prob else (COLOR_PALETTE)
+    for _ in range(16):
+        name, rgb = rng.choice(candidates)
+        if all(rgb_delta_rms(rgb, s.color_rgb) >= min_rms_diff for s in shapes):
+            return name, rgb
+    return ("white", (255,255,255))
 
 # -----------------------
 # Captions
@@ -243,30 +240,32 @@ def make_caption(shapes: List[Shape],
                  exposure_factor: float,
                  include_relations: bool,
                  include_blur: bool,
-                 for_video: bool) -> str:
+                 for_video: bool,
+                 bg_name: str) -> str:
+    exposure_ms = 1000.0 * (exposure_factor / float(fps))
     summary = []
     for s in shapes:
         pos = location_bucket(s.x, s.y, W=512, H=512)
         moving = (abs(s.vx) + abs(s.vy)) > 1e-6
         mv = "moving" if moving else "static"
-        summary.append(f"a {mv} {s.kind} at the {pos}" if include_relations
-                       else f"a {mv} {s.kind}")
-    
+        summary.append(f"a {s.color_name} {s.kind} at the {pos} ({mv})" if include_relations
+                       else f"a {s.color_name} {s.kind} ({mv})")
     who = ", ".join(summary)
-    base = f"{'Video' if for_video else 'Image'} of {who}. "
-    
-    if include_blur:
-        exposure_ms = 1000.0 * (exposure_factor / float(fps))
-        blur_note = (f"Motion blur corresponds to ~{exposure_ms:.1f} ms exposure at {fps:.1f} fps "
-                     f"(≈ {exposure_factor*360:.0f}° shutter).")
-        return base + blur_note
-    return base.strip()
+    base = f"{'Video' if for_video else 'Image'} of {who} on a {bg_name} background. "
+    blur = (f"Motion blur corresponds to ~{exposure_ms:.1f} ms exposure at {fps:.1f} fps "
+            f"(≈ {exposure_factor*360:.0f}° shutter).")
+    return base + (blur if include_blur else "")
 
 # -----------------------
 # Frame mid-times from (#frames, sim_fps)
 # -----------------------
 
 def frame_mid_times_fixed(num_frames: int, sim_fps: float) -> List[float]:
+    """
+    Returns num_frames mid-times spaced at Δt = 1/sim_fps:
+      t_k = (k + 0.5) / sim_fps, k=0..T-1
+    Total simulated duration = num_frames / sim_fps.
+    """
     dt = 1.0 / float(sim_fps)
     return [(k + 0.5) * dt for k in range(num_frames)]
 
@@ -281,10 +280,16 @@ def save_image(path: str, rgb: np.ndarray):
     Image.fromarray(rgb, mode="RGB").save(path)
 
 def save_video_mp4(path: str, frames_rgb: List[np.ndarray], fps_out: int):
+    """
+    Save RGB frames as an MP4 using imageio if available; otherwise fall back to PNG frames.
+    Ensures the parent directory exists to avoid FileNotFoundError from the backend.
+    """
+    # Ensure parent dir exists (prevents FileNotFoundError from imageio)
     dirpath = os.path.dirname(path) or "."
     os.makedirs(dirpath, exist_ok=True)
 
     if _HAS_IMAGEIO:
+        # Make sure frames are a proper contiguous HxWx3 uint8 stack
         if len(frames_rgb) == 0:
             raise ValueError("save_video_mp4: no frames provided")
         arr = np.stack(frames_rgb, axis=0)
@@ -292,20 +297,28 @@ def save_video_mp4(path: str, frames_rgb: List[np.ndarray], fps_out: int):
             arr = arr.astype(np.uint8, copy=False)
         if arr.ndim != 4 or arr.shape[-1] != 3:
             raise ValueError(f"Expected frames as [T,H,W,3] uint8, got {arr.shape} {arr.dtype}")
+
+        # Some encoders require even dimensions; pad if necessary
         T, H, W, C = arr.shape
-        pad_h, pad_w = H % 2, W % 2
+        pad_h = H % 2
+        pad_w = W % 2
         if pad_h or pad_w:
-            padH, padW = H + pad_h, W + pad_w
+            padH = H + pad_h
+            padW = W + pad_w
             pad = np.zeros((T, padH, padW, 3), dtype=np.uint8)
             pad[:, :H, :W, :] = arr
             arr = pad
+
+        # Write
         iio.imwrite(path, arr, fps=fps_out, codec="libx264", quality=8)
     else:
+        # Fallback: PNG sequence next to the intended mp4
         seq_dir = os.path.splitext(path)[0] + "_frames"
         os.makedirs(seq_dir, exist_ok=True)
         for i, f in enumerate(frames_rgb):
             Image.fromarray(f).save(os.path.join(seq_dir, f"{i:04d}.png"))
         warnings.warn(f"No mp4 writer; saved PNG frames to {seq_dir}")
+
 
 # -----------------------
 # Main
@@ -316,13 +329,12 @@ def main():
     ap.add_argument("--out_dir", type=str, required=True)
     ap.add_argument("--modes", type=str, default="image", help="image, video, both")
 
-    # FPS range & scale sampling
+    # NEW: fps range & scale sampling
     ap.add_argument("--fps_lo", type=float, default=10.0)
     ap.add_argument("--fps_hi", type=float, default=250.0)
-    ap.add_argument("--num_scales", type=int, default=3, help="# of stratified scale samples in [-1,1] per scene")
-    ap.add_argument("--samples_per_scale", type=int, default=2, help="Number of unique scenes to generate")
+    ap.add_argument("--num_scales", type=int, default=9, help="# of stratified scale samples in [-1,1]")
 
-    # Video temporal layout
+    # NEW: video temporal layout
     ap.add_argument("--num_frames", type=int, default=8, help="Frames per video clip (e.g., 8 or 4)")
     ap.add_argument("--sim_fps", type=float, default=16.0,
                     help="Virtual timeline rate to place frame mid-times (independent of shutter)")
@@ -337,6 +349,8 @@ def main():
                     help="Integrator max step when advancing motion")
 
     # Images / videos
+    ap.add_argument("--samples_per_scale", type=int, default=10,
+                    help="Number of scenes per scale bucket (per mode)")
     ap.add_argument("--ensure_static_video", action="store_true")
     ap.add_argument("--static_prob_video", type=float, default=0.0)
     ap.add_argument("--fps_out_video", type=int, default=16, help="Encoded mp4 fps")
@@ -355,20 +369,30 @@ def main():
     ap.add_argument("--max_objs", type=int, default=4)
 
     # Background control
-    ap.add_argument("--bg_min_delta_e", type=float, default=30.0,
-                    help="Min perceptual color distance (CIELAB Delta E) between bg and any shape color")
+    ap.add_argument("--bg_white_prob", type=float, default=0.8,
+                    help="Probability to use white background; otherwise pick from palette")
+    ap.add_argument("--bg_min_rms_diff", type=float, default=0.12,
+                    help="Min RMS color distance (0..1) between bg and any shape color")
 
     # Captions
-    ap.add_argument("--caption_relations", action="store_true") # <-- CORRECTED LINE
+    ap.add_argument("--caption_relations", action="store_true")
     ap.add_argument("--caption_blur_note", action="store_true")
+
+    # Repro
+    ap.add_argument("--seed", type=int, default=42)
 
     args = ap.parse_args()
 
+    randomseed=random.randint(0,10000000)
+
     modes = args.modes.lower()
-    do_image = modes in ("image", "both")
-    do_video = modes in ("video", "both")
+    do_image = modes in ("image","both")
+    do_video = modes in ("video","both")
     align_mv = args.align_img_video and do_image and do_video
 
+    # Precompute scales and mapped fps values
+    scales = stratified_scales(args.num_scales, seed=args.seed)
+    fps_per_scale = [fps_from_scale(s, args.fps_lo, args.fps_hi) for s in scales]
     W, H = args.width, args.height
 
     # Roots
@@ -382,15 +406,18 @@ def main():
         print("==> Generating VIDEO dataset")
         print(f"    Using fixed {args.num_frames} frames at sim_fps={args.sim_fps} Hz "
               f"(simulated duration = {args.num_frames/args.sim_fps:.3f}s)")
-    
-    pbar = tqdm(range(args.samples_per_scale), desc="Sampling unique scenes")
-    for idx in pbar:
-        # For each unique scene, we will now sample a NEW set of scales.
-        scales = stratified_scales(args.num_scales)
-        fps_per_scale = [fps_from_scale(s, args.fps_lo, args.fps_hi) for s in scales]
+        mid_times_fixed = frame_mid_times_fixed(args.num_frames, args.sim_fps)
 
-        # Sample base scenes
+    pbar = tqdm(range(args.samples_per_scale), desc="sampling base scenes")
+    for idx in pbar:
+        # Deterministic seeds per index
+        seed_shared = randomseed * 1_000_003 + idx * 97 + 100003
+        seed_img    = randomseed * 1_000_003 + idx * 97 + 1
+        seed_vid    = randomseed * 1_000_003 + idx * 97 + 2
+
+        # Sample bases
         if align_mv:
+            rng_shared = random.Random(seed_shared)
             shared_base = sample_scene(
                 W, H,
                 num_objs_range=(args.min_objs, args.max_objs),
@@ -398,18 +425,23 @@ def main():
                 allow_static=True,
                 ensure_one_static=args.ensure_static_video,
                 static_prob=args.static_prob_video,
+                rng=rng_shared
             )
             shapes_img_base = [Shape(**vars(s)) for s in shared_base]
             shapes_vid_base = [Shape(**vars(s)) for s in shared_base]
             if args.images_force_all_moving:
-                energize_static_shapes(shapes_img_base, args.min_speed, args.max_speed)
+                rng_fix = random.Random(seed_img ^ 0xBEEF)
+                energize_static_shapes(shapes_img_base, args.min_speed, args.max_speed, rng_fix)
         else:
+            rng_img = random.Random(seed_img)
+            rng_vid = random.Random(seed_vid)
             shapes_img_base = sample_scene(
                 W, H,
                 num_objs_range=(args.min_objs, args.max_objs),
                 speed_px_s=(args.min_speed, args.max_speed),
                 allow_static=False,
                 ensure_one_static=False,
+                rng=rng_img
             )
             shapes_vid_base = sample_scene(
                 W, H,
@@ -418,17 +450,25 @@ def main():
                 allow_static=True,
                 ensure_one_static=args.ensure_static_video,
                 static_prob=args.static_prob_video,
+                rng=rng_vid
             )
 
         # Choose background (same bg per sample across all scales for fairness)
-        base_shapes_for_bg = shapes_img_base if do_image else shapes_vid_base
-        bg_rgb = choose_background(base_shapes_for_bg, min_delta_e=args.bg_min_delta_e)
+        rng_bg = random.Random(seed_shared ^ 0xABCDEF)
+        bg_name, bg_rgb = choose_background(
+            shapes_img_base if do_image else shapes_vid_base,
+            bg_palette=COLOR_PALETTE,
+            white_prob=args.bg_white_prob,
+            min_rms_diff=args.bg_min_rms_diff,
+            rng=rng_bg
+        )
 
         # --- IMAGE ---
         if do_image:
+            # Use the midpoint of the simulated duration for the image exposure center
             t_mid = 0.5 * (args.num_frames / args.sim_fps)
             for s_val, fps in zip(scales, fps_per_scale):
-                scale_dir = os.path.join(img_root, f"{s_val:.3f}")
+                scale_dir = os.path.join(img_root, f"{s_val:0.3f}")
                 ensure_dir(scale_dir)
 
                 exposure_span = 1.0 / float(fps)
@@ -450,7 +490,8 @@ def main():
                     cap = make_caption(
                         shapes_img_base, fps=fps, exposure_factor=1.0,
                         include_relations=args.caption_relations,
-                        include_blur=args.caption_blur_note, for_video=False
+                        include_blur=args.caption_blur_note, for_video=False,
+                        bg_name=bg_name
                     )
                     with open(os.path.join(scale_dir, f"scene_{idx:06d}.txt"), "w") as f:
                         f.write(cap)
@@ -459,7 +500,7 @@ def main():
         if do_video:
             mid_times = frame_mid_times_fixed(args.num_frames, args.sim_fps)
             for s_val, fps in zip(scales, fps_per_scale):
-                scale_dir = os.path.join(vid_root, f"{s_val:.3f}")
+                scale_dir = os.path.join(vid_root, f"{s_val:0.3f}")
                 ensure_dir(scale_dir)
 
                 exposure_span = 1.0 / float(fps)
@@ -485,7 +526,8 @@ def main():
                     cap = make_caption(
                         shapes_vid_base, fps=fps, exposure_factor=1.0,
                         include_relations=args.caption_relations,
-                        include_blur=args.caption_blur_note, for_video=True
+                        include_blur=args.caption_blur_note, for_video=True,
+                        bg_name=bg_name
                     )
                     with open(os.path.join(scale_dir, f"scene_{idx:06d}.txt"), "w") as f:
                         f.write(cap)
