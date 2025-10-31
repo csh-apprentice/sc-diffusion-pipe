@@ -64,30 +64,40 @@ def apply_temperature_bgr(
 
 # ------------------ condition space + mapping ------------------
 
-def stratified_scales(n: int, seed: Optional[int] = None) -> List[float]:
+# <--- MODIFIED: Now takes an RNG object ---
+def stratified_scales(n: int, rng: random.Random) -> List[float]:
     """Your bin-uniform *random* sampling over [-1,1]: one random s per bin."""
     if n <= 0:
         raise ValueError("--num_scales must be positive.")
-    rng = random.Random(seed)
+    # <--- REMOVED: No longer creates its own RNG ---
     lo, hi = -1.0, 1.0
     w = (hi - lo) / float(n)
     xs = []
     for i in range(n):
         a = lo + i * w
         b = a + w
-        xs.append(rng.uniform(a, b))
+        xs.append(rng.uniform(a, b)) # <--- USES PASSED-IN RNG ---
     return xs
 
 def map_scale_to_kelvin(s: float, k_lo: float, k_hi: float) -> float:
     """
-    Centered-log mapping:
-      log K = log g + s * 0.5 * log(k_hi / k_lo),  with g = sqrt(k_lo * k_hi)
+    Perceptually-uniform mapping via Mired (Micro Reciprocal Degrees).
+    Maps s in [-1, 1] linearly to Mired space, then converts back to Kelvin.
     """
     if not (k_hi > k_lo > 0):
         raise ValueError("Require 0 < K_lo < K_hi.")
-    g = math.sqrt(k_lo * k_hi)
-    half_span = 0.5 * math.log(k_hi / k_lo)
-    return float(math.exp(math.log(g) + s * half_span))
+
+    # 1. Convert Kelvin bounds to Mired bounds
+    m_warm = 1_000_000.0 / k_lo
+    m_cool = 1_000_000.0 / k_hi
+
+    # 2. Linearly interpolate the scalar 's' in Mired space [m_warm, m_cool]
+    mired = m_warm + (s + 1.0) * (m_cool - m_warm) / 2.0
+
+    # 3. Convert the resulting Mired value back to Kelvin
+    kelvin = 1_000_000.0 / max(mired, 1e-10)
+    
+    return float(kelvin)
 
 # ------------------ scene synthesis (sharp; palette with names) ------------------
 
@@ -205,6 +215,25 @@ def caption_for(shapes: List[Shape], W: int, H: int, bg_name: str) -> str:
 
 # ------------------ main ------------------
 
+def _parse_debug_scales(s: Optional[str]) -> Optional[List[float]]:
+    if not s:
+        return None
+    vals = []
+    for tok in s.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            v = float(tok)
+        except ValueError:
+            raise ValueError(f"--debug-scales contains a non-float token: '{tok}'")
+        if v < -1.0 or v > 1.0:
+            raise ValueError(f"--debug-scales value out of range [-1,1]: {v}")
+        vals.append(v)
+    if not vals:
+        raise ValueError("--debug-scales parsed to an empty list.")
+    return vals
+
 def main():
     ap = argparse.ArgumentParser(description="Sharp images; camera-WB full-frame; exact Kelvin math; bin-uniform random scales.")
     ap.add_argument("--output_dir", required=True)
@@ -226,27 +255,69 @@ def main():
 
     # Background control
     ap.add_argument("--white-bg", action="store_true", help="Force pure-white background; otherwise random from palette.")
+
+    # ---------------- DEBUG MODE: explicit scale list ----------------
+    ap.add_argument(
+        "--debug-scales",
+        type=str,
+        default=None,
+        help="Comma-separated list of scales in [-1,1] (e.g., '0.2,0.4'). If set, ONLY these conditions are rendered."
+    )
+    # ---------------------------------------------------------------
+
     args = ap.parse_args()
 
-    rng = random.Random(args.seed)
+    # --- NEW SEEDING LOGIC ---
+    if args.seed is None:
+        # If no seed, create ONE stateful RNG to preserve old behavior
+        shared_rng = random.Random()
+        use_shared_rng = True
+        print("[info] No seed provided, using shared RNG (scene will vary if num_scales changes).")
+    else:
+        # If seed is given, we will create per-scene RNGs
+        use_shared_rng = False
+        print(f"[info] Using master seed {args.seed} for deterministic scene generation.")
+    # --- END NEW SEEDING LOGIC ---
 
-    # Build *random* scales via stratified bins
-    scales = stratified_scales(args.num_scales, seed=args.seed)
-    # Folder names are just the value (no prefix)
-    folder_names = [f"{s:+.3f}" for s in scales]
+    dbg_scales = _parse_debug_scales(args.debug_scales)
 
-    print(f"[info] scales: {', '.join(folder_names)}")
     print(f"[info] mapping: s=-1 → {map_scale_to_kelvin(-1,args.k_lo,args.k_hi):.0f}K, "
           f"s=0 → {map_scale_to_kelvin(0,args.k_lo,args.k_hi):.0f}K, "
           f"s=+1 → {map_scale_to_kelvin(+1,args.k_lo,args.k_hi):.0f}K  (K_ref={args.k_ref:.0f})")
 
-    # Pre-create per-scale dirs (image+caption in SAME folder)
-    for folder in folder_names:
-        os.makedirs(os.path.join(args.output_dir, folder), exist_ok=True)
-
     W, H = args.width, args.height
     for idx in range(args.num_scenes):
-        base_bgr, shapes, bg_name = make_scene(W, H, args.min_shapes, args.max_shapes, args.white_bg, rng)
+        
+        # --- REVISED RNG GENERATION ---
+        if use_shared_rng:
+            scene_rng = shared_rng
+            scale_rng = shared_rng
+        else:
+            # Create independent, deterministic RNGs using simple arithmetic
+            scene_seed = args.seed + idx * 2 + 1  # Unique seed for scene generation
+            scale_seed = args.seed + idx * 2 + 2  # Unique seed for scale generation
+            scene_rng = random.Random(scene_seed)
+            scale_rng = random.Random(scale_seed)
+        # --- END REVISED RNG GENERATION ---
+
+        # --- Scale generation (debug overrides sampling) ---
+        if dbg_scales is not None:
+            scales = list(dbg_scales)  # use the provided order
+            src = "DEBUG"
+        else:
+            scales = stratified_scales(args.num_scales, rng=scale_rng) # Pass the correct rng
+            src = "stratified"
+        folder_names = [f"{s:.3f}" for s in scales]
+
+        print(f"[Scene {idx:04d}] ({src}) scales: {', '.join(folder_names)}")
+
+        # Pre-create per-scale dirs
+        for folder in folder_names:
+            os.makedirs(os.path.join(args.output_dir, folder), exist_ok=True)
+        # --- END MOVED LOGIC ---
+
+        # Pass the correct rng to make_scene
+        base_bgr, shapes, bg_name = make_scene(W, H, args.min_shapes, args.max_shapes, args.white_bg, rng=scene_rng)
 
         for s, folder in zip(scales, folder_names):
             K = map_scale_to_kelvin(s, args.k_lo, args.k_hi)
@@ -263,8 +334,6 @@ def main():
                 raise RuntimeError(f"Failed to write {img_path}")
             with open(txt_path, "w", encoding="utf-8") as f:
                 f.write(caption_for(shapes, W, H, bg_name))
-
-            print(f"saved: {img_path} | {txt_path}")
 
     print("Done.")
 

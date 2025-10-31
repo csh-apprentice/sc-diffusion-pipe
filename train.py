@@ -1067,6 +1067,7 @@ if __name__ == '__main__':
             print(f"[RESUME_FIX_V2] Loading from: {init_from_existing}")
 
         from pathlib import Path
+        import safetensors
         checkpoint_dir = Path(init_from_existing)
         if checkpoint_dir.is_dir():
             safetensors_files = list(checkpoint_dir.glob('*.safetensors'))

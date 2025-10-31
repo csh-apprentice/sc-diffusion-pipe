@@ -176,7 +176,8 @@ def sample_scene(W: int,
     for i in range(n):
         kind = rng.choice(KINDS)
         cname, crgb = used_colors[i % len(COLOR_PALETTE)]
-        size = rng.uniform(18, 40)
+        # size = rng.uniform(18, 40)
+        size = 40
         x = rng.uniform(margin, W - margin)
         y = rng.uniform(margin, H - margin)
         speed = rng.uniform(*speed_px_s)
@@ -218,7 +219,7 @@ def choose_background(shapes: List[Shape],
                       min_rms_diff: float = 0.12,
                       rng: Optional[random.Random] = None) -> Tuple[str,Tuple[int,int,int]]:
     rng = rng or random
-    candidates = (BG_EXTRA + COLOR_PALETTE) if rng.random() < white_prob else (COLOR_PALETTE + BG_EXTRA)
+    candidates = (BG_EXTRA) if rng.random() < white_prob else (BG_EXTRA + COLOR_PALETTE)
     for _ in range(16):
         name, rgb = rng.choice(candidates)
         if all(rgb_delta_rms(rgb, s.color_rgb) >= min_rms_diff for s in shapes):
@@ -342,7 +343,7 @@ def main():
     ap.add_argument("--height", type=int, default=512)
 
     # Exposure integration
-    ap.add_argument("--samples_per_exposure", type=int, default=32,
+    ap.add_argument("--samples_per_exposure", type=int, default=64,
                     help="Uniform samples within each exposure window (integration)")
     ap.add_argument("--max_step_s", type=float, default=0.005,
                     help="Integrator max step when advancing motion")

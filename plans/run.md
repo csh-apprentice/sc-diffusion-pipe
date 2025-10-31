@@ -2,16 +2,72 @@ Training Command:
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate diffusion-pipe
 
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BLUR_RANDOM.toml' > ./output/fps_nohup_log/fps_shape_blur_random.out 2>&1 &
 
+
+bash /root/workspace/sc-diffusion-pipe/bash/run_principal_orthogonality.sh /root/workspace/sc-diffusion-pipe/output/principal_orthogonality/20251015_14-02-14/orthagnal_check.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/run_backbone_drift.sh /root/workspace/sc-diffusion-pipe/output/backbone_drift/K16/20251014_06-32-03/backbone_drift.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/run_backbone_drift_2.sh /root/workspace/sc-diffusion-pipe/output/backbone_drift/20251019_04-51-46/backbone_drift.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251028_21-19-57/epoch1000/similar_matrix.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix_2.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251027_23-58-53/epoch1000/similar_matrix.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/analyze_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251027_23-58-53/epoch1000 0.5
+
+bash /root/workspace/sc-diffusion-pipe/bash/run_fps_condition_similarity.sh /root/workspace/sc-diffusion-pipe/output/fps_condition_similarity/20251024_22-29-25/epoch1000/fps_condition_similarity.log
+
+
+bash /root/workspace/sc-diffusion-pipe/bash/run_ytext_analysis.sh /root/workspace/sc-diffusion-pipe/output/ytext_analysis/20250930_05-53-32/epoch1000/y_text_anlysis.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/compute_energy.sh /root/workspace/sc-diffusion-pipe/output/energy_compute/20251028_21-19-57/epoch1000/energy_compute.log
+
+
+bash /root/workspace/sc-diffusion-pipe/bash/run_condition_eval.sh /root/workspace/sc-diffusion-pipe/output/condition_eval/20251028_21-19-57/epoch800/eval_condition.log
+
+
+bash bash/run_subspace_analysis.sh \
+    /root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/wan_SC_TARGET_14B_FPS_SHAPE_BLUR.toml \
+    /root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/epoch1000 \
+    -1.0 -0.5 0.0 0.5 1.0  \
+    2>&1 | tee subspace_analysis_epoch1000.log
+
+  b                                         
+      /root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/wan_SC_TARGET_14B_FPS_SHAPE_BLUR.toml \
+      /root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/epoch1000 \
+      -1.0 -0.5 0.0 0.5 1.0 \
+      2>&1 | tee subspace_analysis_epoch1000.log
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_SHUTTER_150_8f.toml' > ./output/fps_nohup_log/shutter_150_8f.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BLUR_TRIGGER.toml' > ./output/fps_nohup_log/fps_shape_blur_trigger.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BLUR_DEBUG_TRIGGER.toml' > ./output/fps_nohup_log/fps_shape_blur_debug_trigger.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config shutter_bokeh_TOML/wan_SC_TARGET_14B_2SHAPES_SHUTTER_BOKEH_SYNTHESIS.toml' > ./output/fps_bokeh_log/2dshape_bokeh.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_3SHAPES_BASE.toml' > ./output/bokeh_nohup_log/3shapes_bokeh_base.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_3SHAPES_30SCENE_1028.toml' > ./output/bokeh_nohup_log/3shapes_Bokeh_1028.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_3SHAPES_30SCENE_1030_3.toml' > ./output/bokeh_nohup_log/3shapes_Bokeh_1030_3.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_3SHAPES_30SCENE_1030_5.toml' > ./output/bokeh_nohup_log/3shapes_Bokeh_1030_5.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_BOKEH_150_DIVERSE.toml' > ./output/bokeh_nohup_log/bokeh_150_diverse.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_SHAPE_SOLID_MINI_PART12.toml' > ./output/bokeh_nohup_log/SOLID_MINI_PART12.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_BOKEH_150_02.toml' > ./output/bokeh_nohup_log/bokeh_150_02.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_VID_BASEONLY.toml' > ./output/nohup_log/single_video_baseonly_6000.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_MOUTAIN_FLOWER.toml' > ./output/temp_nohup_log/temp_mf_all_104.out 2>&1 &
 
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_2DSHAPE_TEMP_all.toml' > ./output/temp_nohup_log/temp_2dshape_temp_all.out 2>&1 &
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_TEMP_150_r8.toml' > ./output/temp_nohup_log/temp_150_r8.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_TEMP_BASE.toml' > ./output/temp_nohup_log/temp_base.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_SHAPE_TEMP_REDBLUEWHITE_ALL.toml' > ./output/temp_nohup_log/temp_redbluewhite_all.out 2>&1 &
 
@@ -184,8 +240,9 @@ python make_palette_2x2.py \
 
 
 python generate_synthetic_blur_dataset_multi.py \
-  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes_blur/debug \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_one_shot_150_8f/ \
   --modes video \
+  --num_scales 150 \
   --samples_per_scale 1 \
   --num_frames 8 \
   --align_img_video \
@@ -194,6 +251,7 @@ python generate_synthetic_blur_dataset_multi.py \
   --min_obj 1 \
   --max_objs 1 \
   --seed 42 \
+  --bg_white_prob 1.0 \
   --caption_relations 
 
 
@@ -211,9 +269,80 @@ python generate_synthetic_blur_dataset_full_random.py \
   --caption_relations 
 
 
+python generate_synthetic_blur_dataset_pallete_random.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_one_shot_150_8f/ \
+  --modes video \
+  --num_scales 9 \
+  --samples_per_scale 1 \
+  --num_frames 8 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_obj 1 \
+  --max_objs 1 \
+  --bg_white_prob 1.0 \
+  --caption_relations 
+
+python generate_synthetic_blur_dataset_final.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes_blur_new/1s4f \
+  --modes video \
+  --num_scales 1 \
+  --samples_per_scale 2 \
+  --num_frames 4 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_obj 1 \
+  --max_objs 3 \
+  --caption_relations 
+  
+
 python generate_temp_by_scale.py \
-  --output_dir /root/workspace/sc-diffusion-pipe/dataset/debug \
-  --num_scenes 1 \
-  --num_scales 19 \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/2dshapes_temp_part2/9s \
+  --num_scenes 3 \
+  --num_scales 9 \
   --white-bg \
-  --k-lo 2000 --k-hi 18000 --k-ref 6000 --preserve-luminance
+  --k-lo 2000 --k-hi 20000 --k-ref 6500 --preserve-luminance
+
+python generate_temp_by_scale.py \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/temp_one_shot_150 \
+  --num_scenes 1 \
+  --num_scales 150 \
+  --white-bg \
+  --seed 38 \
+  --min_shapes 3 \
+  --max_shapes 3 \
+  --k-lo 2000 --k-hi 20000 --k-ref 6500 --preserve-luminance 
+
+
+python generate_temp_by_scale.py \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/benchmark_temp \
+  --num_scenes 1 \
+  --num_scales 150 \
+  --white-bg \
+  --seed 38 \
+  --min_shapes 3 \
+  --max_shapes 3 \
+  --debug-scales 0.0 \
+  --k-lo 2000 --k-hi 20000 --k-ref 6500 --preserve-luminance 
+
+python apply_temp_shifts.py \
+  --input_image /root/workspace/sc-diffusion-pipe/utils/synthesis/crisp_shapes.png \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/temp_one_shot_150 \
+  --num_scales 150 \
+  --k-lo 2000 \
+  --k-hi 20000 \
+  --k-ref 6500 \
+  --preserve-luminance \
+  --seed 38
+
+
+find /root/workspace/sc-diffusion-pipe/dataset/shapes_blur_trigger -type f -name "*.txt" -exec sed -i '1s;^;In [NFSC_ST_1018] style: ;' {} +
+
+cd /root/workspace/sc-diffusion-pipe/dataset/temp_one_shot_150
+find . -type d -exec cp /root/workspace/sc-diffusion-pipe/utils/synthesis/crisp_shapes.txt {} \;
+
+
+./bash/run_yfps_analysis.sh ./analysis/yellow_light.log
+
+

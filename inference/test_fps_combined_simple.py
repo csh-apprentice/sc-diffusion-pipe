@@ -41,6 +41,10 @@ def merge_checkpoints(checkpoint_base, checkpoint_fps, output_path):
     # Load FPS checkpoint
     if checkpoint_fps:
         fps_path = Path(checkpoint_fps)
+        if not fps_path.exists():
+            logging.error(f"❌ FPS checkpoint path does not exist: {checkpoint_fps}")
+            raise FileNotFoundError(f"FPS checkpoint not found: {checkpoint_fps}")
+
         safetensors_files = list(fps_path.glob('*.safetensors'))
         if safetensors_files:
             logging.info(f"Loading FPS parameters from: {checkpoint_fps}")
@@ -54,6 +58,11 @@ def merge_checkpoints(checkpoint_base, checkpoint_fps, output_path):
                     fps_count += 1
 
             logging.info(f"✓ Added {fps_count} FPS parameters")
+            if fps_count == 0:
+                logging.warning(f"⚠️  No FPS parameters found in checkpoint!")
+        else:
+            logging.error(f"❌ No .safetensors files found in: {checkpoint_fps}")
+            raise FileNotFoundError(f"No safetensors files in FPS checkpoint: {checkpoint_fps}")
 
     # Load base LoRA checkpoint
     if checkpoint_base:
