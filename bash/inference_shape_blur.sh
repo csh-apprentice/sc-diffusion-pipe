@@ -55,22 +55,53 @@ cd inference
 #     --height 512 \
 #     > ../output/nohup_log/shutter_20251014_06-32-03_epoch1000_negallflat.out 2>&1 
 
-# echo "$(date) starting inferencing epoch 1000"
-# # cd inference
+echo "$(date) starting inferencing epoch 1000"
+# cd inference
 # python test_fps_multiple_experiments_align_old.py \
 #     --config /root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/wan_SC_TARGET_14B_FPS_SHAPE_BLUR.toml \
 #     --checkpoint ../checkpoints/20251014_06-32-03/epoch1000\
-#     --fps_values -1.0 0.0 1.0 \
+#     --fps_values -0.5 0.5 \
 #     --steps 50 \
 #     --frames 49 \
-#     --output_dir ../output/20251014_06-32-03_epoch1000_neg_flat_color \
-#     --prompt_folder /root/workspace/sc-diffusion-pipe/prompt_folder/shutter_prompts/all_prompts \
-#     --negative_prompt "flat color background, pure color background, 色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
+#     --output_dir ../output/20251014_06-32-03_epoch1000 \
+#     --prompt_folder /root/workspace/sc-diffusion-pipe/prompt_folder/shutter_prompts/ablation \
+#     --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
 #     --seed 42 \
 #     --port 29502 \
 #     --width 512 \
 #     --height 512 \
-#     > ../output/nohup_log/shutter_20251014_06-32-03_epoch1000_negflat_color.out 2>&1 
+#     > ../output/nohup_log/shutter_20251014_06-32-03_epoch1000_other.out 2>&1 
+
+
+python test_fps_multiple_experiments_align_old.py \
+    --config /root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/wan_SC_TARGET_14B_FPS_SHAPE_BLUR.toml \
+    --checkpoint ../checkpoints/20251014_06-32-03/epoch1000\
+    --fps_values -1.0 -0.5 0.0 0.5 1.0  \
+    --steps 50 \
+    --frames 49 \
+    --output_dir ../output/20251014_06-32-03_epoch1000_fps_only \
+    --prompt_folder /root/workspace/sc-diffusion-pipe/prompt_folder/shutter_prompts/span2 \
+    --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
+    --seed 42 \
+    --port 29502 \
+    --width 512 \
+    --fps_only\
+    > ../output/nohup_log/shutter_20251014_06-32-03_epoch1000_span2_fpsonly.out 2>&1 
+
+python test_fps_multiple_experiments_align_old.py \
+    --config /root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/wan_SC_TARGET_14B_FPS_SHAPE_BLUR.toml \
+    --checkpoint ../checkpoints/20251014_06-32-03/epoch1000\
+    --fps_values -1.0 -0.5 0.0 0.5 1.0  \
+    --steps 50 \
+    --frames 49 \
+    --output_dir ../output/20251014_06-32-03_epoch1000_fps_only \
+    --prompt_folder /root/workspace/sc-diffusion-pipe/prompt_folder/shutter_prompts/span3 \
+    --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
+    --seed 42 \
+    --port 29502 \
+    --width 512 \
+    --fps_only\
+    > ../output/nohup_log/shutter_20251014_06-32-03_epoch1000_span3_fpsonly.out 2>&1 
 
 
 # cd inference
@@ -176,19 +207,37 @@ cd inference
 #     --height 512 \
 #     > ../output/nohup_log/shutter_20251027_03-52-36_epoch1000.out 2>&1 
 
-echo "$(date) starting inferencing epoch 1000"
-# cd inference
+# echo "$(date) starting inferencing epoch 1000"
+# # cd inference
+# python test_fps_multiple_experiments_align_old.py \
+#     --config /root/workspace/sc-diffusion-pipe/checkpoints/20251027_23-58-53/wan_SC_TARGET_14B_SHUTTER_150_8f.toml \
+#     --checkpoint ../checkpoints/20251027_23-58-53/epoch500 \
+#     --fps_values -1.0 0.0 1.0 \
+#     --steps 50 \
+#     --frames 49 \
+#     --output_dir ../output/20251027_23-58-53_epoch500 \
+#     --prompt_folder /root/workspace/sc-diffusion-pipe/prompt_folder/shutter_prompts/all_prompts \
+#     --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
+#     --seed 42 \
+#     --port 29502 \
+#     --width 512 \
+#     --height 512 \
+#     > ../output/nohup_log/shutter_20251027_23-58-53_epoch500.out 2>&1 
+
+
+
 python test_fps_multiple_experiments_align_old.py \
-    --config /root/workspace/sc-diffusion-pipe/checkpoints/20251027_23-58-53/wan_SC_TARGET_14B_SHUTTER_150_8f.toml \
-    --checkpoint ../checkpoints/20251027_23-58-53/epoch500 \
-    --fps_values -1.0 0.0 1.0 \
+    --config /root/workspace/sc-diffusion-pipe/checkpoints/20251106_09-42-01/wan_SC_TARGET_14B_FPS_HORSE_ABLATION.toml \
+    --checkpoint ../checkpoints/20251106_09-42-01/epoch1000\
+    --fps_values 0.0 \
     --steps 50 \
     --frames 49 \
-    --output_dir ../output/20251027_23-58-53_epoch500 \
-    --prompt_folder /root/workspace/sc-diffusion-pipe/prompt_folder/shutter_prompts/all_prompts \
+    --output_dir ../output/20251106_09-42-01_epoch1000 \
+    --prompt "A man running on the fild under sunshine." \
     --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
     --seed 42 \
     --port 29502 \
     --width 512 \
     --height 512 \
-    > ../output/nohup_log/shutter_20251027_23-58-53_epoch500.out 2>&1 
+    --base_only \
+    > ../output/nohup_log/shutter_20251106_09-42-01_epoch1000.out 2>&1 

@@ -853,7 +853,7 @@ def parse_fps_values(fps_values_flat, num_conditions):
 def main():
     parser = argparse.ArgumentParser(description='Multi-FPS experiment script - TOML-aligned')
     parser.add_argument('--config', required=True, help='Path to TOML configuration file')
-    parser.add_argument('--checkpoint', required=True, help='Path to FPS checkpoint')
+    parser.add_argument('--checkpoint', required=False, help='Path to FPS checkpoint (not needed if using --clean)')
     parser.add_argument('--output_dir', default='./fps_experiments_align', help='Output directory')
     parser.add_argument('--fps_values', nargs='+', type=float, default=[12, 24, 60],
                         help='FPS values to test. ' +
@@ -873,6 +873,7 @@ def main():
     parser.add_argument('--force_gate_one', action='store_true', help='🔧 DIAGNOSTIC: Force all FPS adapter gates to 1.0 for maximum FPS impact')
     parser.add_argument('--fps_only', action='store_true', help='Load only FPS-related parameters from checkpoint (ignore base LoRA)')
     parser.add_argument('--base_only', action='store_true', help='Load only base LoRA parameters from checkpoint (ignore FPS parameters)')
+    parser.add_argument('--clean', action='store_true', help='Use clean backbone without loading any LoRA (neither base LoRA nor FPS adapters)')
 
     args = parser.parse_args()
 
@@ -883,9 +884,14 @@ def main():
         parser.error("--prompt and --prompt_folder are mutually exclusive. Choose one.")
 
     # Validate selective loading arguments
-    if args.fps_only and args.base_only:
-        parser.error("--fps_only and --base_only are mutually exclusive. Choose one or neither.")
-    
+    exclusive_modes = [args.fps_only, args.base_only, args.clean]
+    if sum(exclusive_modes) > 1:
+        parser.error("--fps_only, --base_only, and --clean are mutually exclusive. Choose at most one.")
+
+    # Validate checkpoint requirement
+    if not args.clean and not args.checkpoint:
+        parser.error("--checkpoint is required unless using --clean mode")
+
     try:
         # Setup
         setup_environment(args.port)
@@ -915,25 +921,31 @@ def main():
             for i, vals in enumerate(fps_values_parsed, 1):
                 logging.info(f"    Experiment {i}: [{', '.join(str(v) for v in vals)}]")
 
-        # Validate selective loading requirements
-        if args.fps_only:
-            validate_fps_config(config)
-            logging.info("🎯 FPS-ONLY MODE: Will load only FPS-related parameters")
-        elif args.base_only:
-            validate_base_lora_config(config)
-            logging.info("🎯 BASE-ONLY MODE: Will load only base LoRA parameters")
-        
-        # Apply checkpoint
-        logging.info("Applying checkpoint...")
-        # Get base LoRA rank from TOML config or default
-        base_rank = config.get('adapter', {}).get('rank', 32)
-        pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=base_rank,
-                                   fps_only=args.fps_only, base_only=args.base_only, config=config)
+        # Validate selective loading requirements and apply checkpoint
+        if args.clean:
+            logging.info("🧹 CLEAN MODE: Using original backbone without any LoRA")
+            logging.info("   → Skipping checkpoint loading entirely")
+            logging.info("   → No base LoRA will be applied")
+            logging.info("   → No FPS adapters will be applied")
+        else:
+            if args.fps_only:
+                validate_fps_config(config)
+                logging.info("🎯 FPS-ONLY MODE: Will load only FPS-related parameters")
+            elif args.base_only:
+                validate_base_lora_config(config)
+                logging.info("🎯 BASE-ONLY MODE: Will load only base LoRA parameters")
+
+            # Apply checkpoint
+            logging.info("Applying checkpoint...")
+            # Get base LoRA rank from TOML config or default
+            base_rank = config.get('adapter', {}).get('rank', 32)
+            pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=base_rank,
+                                       fps_only=args.fps_only, base_only=args.base_only, config=config)
         
         # SUBTASK 2: Use TOML parameters for inference settings (with CLI overrides)
         # Extract inference parameters from TOML config or use defaults
-        width = args.width if args.width is not None else 832
-        height = args.height if args.height is not None else 480
+        width = args.width if args.width is not None else 512
+        height = args.height if args.height is not None else 512
         scale = args.scale if args.scale is not None else 6.0
         
         logging.info("Inference parameters:")

@@ -691,7 +691,8 @@ def generate_video_with_fps(pipeline, config, prompt, n_prompt, fps=60, seed=42,
                         rfps = y_fps_norm / (y_text_norm + 1e-8)
 
                         # Alignment ratio
-                        align_ratio = rboth / (rfps + 1e-8)
+                        #align_ratio = rboth / (rfps + 1e-8)
+                        align_ratio = rfps / (rboth + 1e-8)
 
                         # Scale y_fps
                         y_fps = y_fps * align_ratio

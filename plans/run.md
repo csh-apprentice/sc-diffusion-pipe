@@ -41,7 +41,13 @@ bash bash/run_subspace_analysis.sh \
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_SHUTTER_150_8f.toml' > ./output/fps_nohup_log/shutter_150_8f.out 2>&1 &
 
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_ABLATION.toml' > ./output/fps_nohup_log/shutter_single_ablation.out 2>&1 &
+
+
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BLUR_TRIGGER.toml' > ./output/fps_nohup_log/fps_shape_blur_trigger.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_HORSE_ABLATION.toml' > ./output/fps_nohup_log/shutter_horse.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BLUR_DEBUG_TRIGGER.toml' > ./output/fps_nohup_log/fps_shape_blur_debug_trigger.out 2>&1 &
 
@@ -53,6 +59,9 @@ nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_3SHAPES_30SCENE_1030_3.toml' > ./output/bokeh_nohup_log/3shapes_Bokeh_1030_3.out 2>&1 &
 
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_3SHAPES_150SCENE_1103.toml' > ./output/bokeh_nohup_log/3shapes_Bokeh_150_1103.out 2>&1 &
+
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_3SHAPES_30SCENE_1030_5.toml' > ./output/bokeh_nohup_log/3shapes_Bokeh_1030_5.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_BOKEH_150_DIVERSE.toml' > ./output/bokeh_nohup_log/bokeh_150_diverse.out 2>&1 &
@@ -60,6 +69,8 @@ nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_SHAPE_SOLID_MINI_PART12.toml' > ./output/bokeh_nohup_log/SOLID_MINI_PART12.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_BOKEH_150_02.toml' > ./output/bokeh_nohup_log/bokeh_150_02.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_HUMAN.toml' > ./output/bokeh_nohup_log/bokeh_human_new.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_VID_BASEONLY.toml' > ./output/nohup_log/single_video_baseonly_6000.out 2>&1 &
 
@@ -154,7 +165,15 @@ python generate_synthetic_blur_dataset.py \
 
   --ensure_static_video \
 
-
+python generate_synthetic_blur_dataset.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/datatset/test_vid \
+  --num_scenes 2 \
+  --fps_bins 12 240 \
+  --video --frames 16 \
+  --width 512 --height 512 \
+  --substeps 16 \
+  --relations basic \
+  --caption_blur_text none
 
 
 python generate_synthetic_blur_dataset.py \
@@ -201,8 +220,8 @@ nohup python test_fps_multiple_experiments_align.py \
 
 
 python resize_image.py \
-  --input /root/workspace/BokehMe/K40/21/human.jpg \
-  --output /root/workspace/sc-diffusion-pipe/dataset/human_bokeh/1.6/human.jpg\
+  --input /root/workspace/BokehMe/K2/21/human.jpg \
+  --output /root/workspace/sc-diffusion-pipe/dataset/human_bokeh/32/human.jpg\
   --width  512\
   --height  675
 
@@ -252,6 +271,21 @@ python generate_synthetic_blur_dataset_multi.py \
   --max_objs 1 \
   --seed 42 \
   --bg_white_prob 1.0 \
+  --caption_relations 
+
+
+python generate_synthetic_blur_dataset_fps.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_one_shot_ablation/ \
+  --modes video \
+  --fps_list 12,24,30,40,60,120,240 \
+  --samples_per_fps 1 \
+  --num_frames 8 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_objs 1 \
+  --max_objs 1 \
+  --seed 42 \
   --caption_relations 
 
 
@@ -337,6 +371,17 @@ python apply_temp_shifts.py \
   --seed 38
 
 
+python apply_temp_shifts.py \
+  --input_image /root/workspace/sc-diffusion-pipe/dataset/mouflower_temp/6000/mouflower.jpg \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/mouflower_ablation \
+  --num_scales 7 \
+  --k-lo 2000 \
+  --k-hi 20000 \
+  --k-ref 6500 \
+  --preserve-luminance \
+  --seed 42
+
+
 find /root/workspace/sc-diffusion-pipe/dataset/shapes_blur_trigger -type f -name "*.txt" -exec sed -i '1s;^;In [NFSC_ST_1018] style: ;' {} +
 
 cd /root/workspace/sc-diffusion-pipe/dataset/temp_one_shot_150
@@ -346,3 +391,96 @@ find . -type d -exec cp /root/workspace/sc-diffusion-pipe/utils/synthesis/crisp_
 ./bash/run_yfps_analysis.sh ./analysis/yellow_light.log
 
 
+
+python evaluate.py \
+    --dimension 'subject_consistency' 'background_consistency'  'motion_smoothness' 'dynamic_degree' 'aesthetic_quality' 'imaging_quality' \
+    --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/20251008_20-21-45 \
+    --mode=custom_input \
+    --output_path "./50_49/evaluation_20251008_20-21-45/"
+
+python evaluate.py \
+    --dimension 'subject_consistency' 'background_consistency'  'motion_smoothness' 'dynamic_degree' 'aesthetic_quality' 'imaging_quality' \
+    --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/20251031_08-25-18 \
+    --mode=custom_input \
+    --output_path "./50_49/evaluation_20251031_08-25-18/"
+
+python evaluate.py \
+    --dimension 'subject_consistency' 'background_consistency'  'motion_smoothness' 'dynamic_degree' 'aesthetic_quality' 'imaging_quality' \
+    --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/clean_category_42 \
+    --mode=custom_input \
+    --output_path "./evaluation_clean/"
+
+
+python evaluate.py \
+    --dimension 'subject_consistency' 'background_consistency'  'motion_smoothness' 'dynamic_degree' 'aesthetic_quality' 'imaging_quality' \
+    --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/20251030_08-16-52 \
+    --mode=custom_input \
+    --output_path "./50_49/evaluation_20251030_08-16-52/"
+
+
+python evaluate.py \
+    --dimension 'subject_consistency' 'background_consistency'  'motion_smoothness' 'dynamic_degree' 'aesthetic_quality' 'imaging_quality' \
+    --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/20251023_00-19-38 \
+    --mode=custom_input \
+    --output_path "./50_49/evaluation_20251023_00-19-38/"
+
+
+
+python metric/visualize_score_progression.py \
+  --checkpoint_dirs scores/20251031_08-25-18 scores/20251008_20-21-45  \
+  --labels "Human" "3 Shapes"  \
+  --score_types ssf ss_fd dvs \
+  --title_prefix "One Shot Training Progression" \
+  --baseline scores/clean_category_99 \
+  --output_dir plots/one_shot
+
+
+python metric/visualize_score_progression.py \
+  --checkpoint_dirs scores/20251031_08-25-18 scores/20251008_20-21-45  \
+  --labels "Human" "3 Shapes"  \
+  --score_types ssf ss_fd dvs \
+  --title_prefix "One Shot Training Progression" \
+  --baseline scores/clean_category_99 \
+  --output_dir plots/one_shot
+
+
+
+python metric/visualize_score_progression.py \
+  --checkpoint_dirs scores/20251014_06-32-03 scores/20251030_08-16-52 scores/20251023_00-19-38  \
+  --labels "Shutter Speed (30)" "Bokeh (30)" "Temp (30)"  \
+  --score_types ssf ss_fd  \
+  --title_prefix " Training Progression" \
+  --baseline scores/clean_category_99 \
+  --output_dir plots/30_shots
+
+
+python metric/visualize_score_progression.py \
+  --checkpoint_dirs scores/20251027_22-55-30 scores/20251030_08-16-52   \
+  --labels "One shot" "30 shots" \
+  --score_types ssf ss_fd  \
+  --title_prefix " One shot vs. 30 shots Training Progression" \
+  --baseline scores/clean_category_99 \
+  --output_dir plots/ablation
+
+
+python metric/visualize_score_progression.py \
+  --checkpoint_dirs scores/20251014_06-32-03  \
+  --labels "Shutter Speed (30)"   \
+  --score_types ssf ss_fd  \
+  --title_prefix " Training Progression" \
+  --baseline scores/clean_category_99 \
+  --output_dir plots/debug
+
+
+cp -r /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span1 /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span1_focus
+
+
+cp -r /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span2 /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span2_focus
+
+cp -r /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span3 /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span3_focus
+
+
+# 2. Loop through each .txt file in the copied folder and append text
+for file in /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span3_focus/*.txt; do
+    echo ", the camera focus on the foreground." >> "$file"
+done
