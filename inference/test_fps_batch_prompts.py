@@ -33,7 +33,7 @@ from inference_utils.utils import cache_video
 from utils.common import DTYPE_MAP
 
 # Import all the helper functions from the original script
-from inference.test_fps_multiple_experiments_align_old import (
+from inference.test_fps_multiple_experiments_align import (
     setup_environment,
     load_pipeline_from_toml,
     detect_checkpoint_type,
@@ -43,8 +43,10 @@ from inference.test_fps_multiple_experiments_align_old import (
     generate_video_with_fps,
     validate_fps_config,
     validate_base_lora_config,
-    parse_fps_values
+    get_fps_block_indices
 )
+# Import parse_fps_values from the old file (not yet migrated to new file)
+from inference.test_fps_multiple_experiments_align_old import parse_fps_values
 
 def load_prompts_from_file(file_path):
     """
@@ -466,15 +468,17 @@ Examples:
                        help='Load only FPS-related parameters from checkpoint (ignore base LoRA)')
     parser.add_argument('--base_only', action='store_true',
                        help='Load only base LoRA parameters from checkpoint (ignore FPS parameters)')
+    parser.add_argument('--graft', action='store_true',
+                       help='🌿 GRAFT MODE: Load base LoRA only in blocks where FPS adapters exist (spatial matching)')
     parser.add_argument('--clean', action='store_true',
                        help='Use clean backbone without loading any LoRA (neither base LoRA nor FPS adapters)')
 
     args = parser.parse_args()
 
     # Validate selective loading arguments
-    exclusive_modes = [args.fps_only, args.base_only, args.clean]
+    exclusive_modes = [args.fps_only, args.base_only, args.graft, args.clean]
     if sum(exclusive_modes) > 1:
-        parser.error("--fps_only, --base_only, and --clean are mutually exclusive. Choose at most one.")
+        parser.error("--fps_only, --base_only, --graft, and --clean are mutually exclusive. Choose at most one.")
 
     # Validate checkpoint requirement
     if not args.clean and not args.checkpoint and not args.checkpoint_parent:
@@ -589,7 +593,23 @@ Examples:
                 logging.info(f"Applying checkpoint: {checkpoint_path}")
                 base_rank = config.get('adapter', {}).get('rank', 32)
                 pipeline = apply_checkpoint(pipeline, checkpoint_path, rank=base_rank,
-                                           fps_only=args.fps_only, base_only=args.base_only, config=config)
+                                           fps_only=args.fps_only, base_only=args.base_only,
+                                           graft_mode=False, config=config)
+            elif args.graft:
+                if checkpoint_idx == 1:  # Only validate once
+                    validate_fps_config(config)
+                    validate_base_lora_config(config)
+                    fps_block_indices = get_fps_block_indices(config)
+                    logging.info(f"🌿 GRAFT MODE: Will load FPS parameters + base LoRA only in blocks {fps_block_indices}")
+                    logging.info("   → Output filenames WILL include FPS condition")
+
+                # Apply checkpoint
+                logging.info(f"Applying checkpoint: {checkpoint_path}")
+                base_rank = config.get('adapter', {}).get('rank', 32)
+                pipeline = apply_checkpoint(pipeline, checkpoint_path, rank=base_rank,
+                                           fps_only=False, base_only=False,
+                                           graft_mode=True, config=config)
+                include_fps_in_name = True
             else:
                 # Normal mode or FPS-only mode
                 if args.fps_only:
@@ -601,7 +621,8 @@ Examples:
                 logging.info(f"Applying checkpoint: {checkpoint_path}")
                 base_rank = config.get('adapter', {}).get('rank', 32)
                 pipeline = apply_checkpoint(pipeline, checkpoint_path, rank=base_rank,
-                                           fps_only=args.fps_only, base_only=args.base_only, config=config)
+                                           fps_only=args.fps_only, base_only=args.base_only,
+                                           graft_mode=False, config=config)
                 include_fps_in_name = True
 
             # Run batch inference for this checkpoint

@@ -84,8 +84,8 @@ def main():
     # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/clean_category_42")
     # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251031_08-25-18")
     # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251008_20-21-45")
-    # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251014_06-32-03")
-    VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251023_00-19-38")
+    VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251014_06-32-03_graft")
+    # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251023_00-19-38")
     # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251030_08-16-52")
 
     

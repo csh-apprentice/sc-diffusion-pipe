@@ -12,7 +12,10 @@ bash /root/workspace/sc-diffusion-pipe/bash/run_backbone_drift_2.sh /root/worksp
 
 bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251028_21-19-57/epoch1000/similar_matrix.log
 
-bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix_2.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251027_23-58-53/epoch1000/similar_matrix.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251107_00-49-00/epoch1000/similar_matrix.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix_2.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251107_00-51-16/epoch1000/similar_matrix.log
 
 bash /root/workspace/sc-diffusion-pipe/bash/analyze_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251027_23-58-53/epoch1000 0.5
 
@@ -48,6 +51,9 @@ nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BLUR_TRIGGER.toml' > ./output/fps_nohup_log/fps_shape_blur_trigger.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_HORSE_ABLATION.toml' > ./output/fps_nohup_log/shutter_horse.out 2>&1 &
+
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_SHUTTER_30S.toml' > ./output/fps_nohup_log/shutter_30S.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_BLUR_DEBUG_TRIGGER.toml' > ./output/fps_nohup_log/fps_shape_blur_debug_trigger.out 2>&1 &
 
@@ -317,6 +323,21 @@ python generate_synthetic_blur_dataset_pallete_random.py \
   --bg_white_prob 1.0 \
   --caption_relations 
 
+
+python generate_synthetic_blur_dataset_pallete_align.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_debug_100 \
+  --modes video \
+  --num_scales 100 \
+  --samples_per_scale 1 \
+  --num_frames 4 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_obj 2 \
+  --max_objs 2 \
+  --seed 40 \
+  --caption_relations 
+
 python generate_synthetic_blur_dataset_final.py \
   --out_dir /root/workspace/sc-diffusion-pipe/dataset/shapes_blur_new/1s4f \
   --modes video \
@@ -394,9 +415,9 @@ find . -type d -exec cp /root/workspace/sc-diffusion-pipe/utils/synthesis/crisp_
 
 python evaluate.py \
     --dimension 'subject_consistency' 'background_consistency'  'motion_smoothness' 'dynamic_degree' 'aesthetic_quality' 'imaging_quality' \
-    --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/20251008_20-21-45 \
+    --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/20251030_08-16-52_graft \
     --mode=custom_input \
-    --output_path "./50_49/evaluation_20251008_20-21-45/"
+    --output_path "./50_49/evaluation_20251030_08-16-52_graft/"
 
 python evaluate.py \
     --dimension 'subject_consistency' 'background_consistency'  'motion_smoothness' 'dynamic_degree' 'aesthetic_quality' 'imaging_quality' \
@@ -484,3 +505,23 @@ cp -r /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span3 /root/
 for file in /root/workspace/sc-diffusion-pipe/prompt_folder/bokeh_prompts/span3_focus/*.txt; do
     echo ", the camera focus on the foreground." >> "$file"
 done
+
+for f in *_0fps.mp4; do
+  mv "$f" "${f/_0fps/}"
+done
+
+
+find . -type f -name "*_0fps.mp4" | while read f; do
+  new="${f/_0fps/}"
+  mv "$f" "$new"
+done
+
+
+python inference_flux.py \
+    --prompt "A painting on an easel in a meadow of wildflowers, the camera focus on the foreground." \
+    --bokeh_target 0.0  28.0 \
+    --bokeh_pivot 15.0 \
+    --num_grounding_steps 24
+
+
+python inference_bokehK.py --config configs/inference_genphoto/adv3_256_384_genphoto_relora_bokehK.yaml --base_scene "A young boy wearing an orange jacket is standing on a crosswalk, waiting to cross the street." --bokehK_list "[2.0, 24.0]"

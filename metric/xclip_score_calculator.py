@@ -65,10 +65,15 @@ def main():
     # --- Configuration ---
     # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251023_00-19-38")
     # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/clean_category_42")
-    # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251014_06-32-03")
+    # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251014_06-32-03_graft")
     # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251023_00-19-38")
-    VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251030_08-16-52")
-    # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251031_08-25-18")
+    # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251030_08-16-52_graft")
+    #VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251106_09-42-00") # shutter real
+    #VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251107_00-49-00") # temp syn
+    # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251107_00-51-16") # temp real
+    #VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251031_08-25-18") # bokeh real
+    # VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251107_01-19-02") # shutter syn
+    VIDEOS_DIR = Path("/root/workspace/sc-diffusion-pipe/output/50_49/20251008_20-21-45") # bokeh syn
     PROMPT_FILE = Path("/root/workspace/sc-diffusion-pipe/utils/VBench/prompts/high_quality_prompts_96.txt") 
     VIDEO_EXTENSION = "*.mp4" 
     WINDOW_SIZE = 32 # X-CLIP expects 32 frames

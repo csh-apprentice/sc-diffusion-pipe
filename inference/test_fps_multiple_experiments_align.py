@@ -109,17 +109,17 @@ def detect_checkpoint_type(lora_path):
     import safetensors
     try:
         checkpoint = safetensors.torch.load_file(lora_path)
-        
+
         has_base_lora = False
         has_fps_params = False
-        
+
         for key in checkpoint.keys():
             if 'fps_conditioning' in key or 'fps_adapter' in key:
                 has_fps_params = True
             elif key.endswith('.weight') and ('lora_A' in key or 'lora_B' in key):
                 if 'fps' not in key:
                     has_base_lora = True
-        
+
         if has_fps_params and not has_base_lora:
             return 'fps_only'
         elif has_fps_params and has_base_lora:
@@ -130,9 +130,38 @@ def detect_checkpoint_type(lora_path):
         logging.warning(f"Could not detect checkpoint type: {e}")
         return 'unknown'
 
-def load_adapter_weights_selective(pipeline, checkpoint_path, fps_only=False, base_only=False):
+def get_fps_block_indices(config):
+    """Extract the list of block indices where FPS adapters are injected.
+
+    Returns:
+        List of block indices (e.g., [27, 28, 29, ..., 38, 39])
+    """
+    model_config = config.get('model', {})
+    fps_condition_blocks = model_config.get('fps_condition_blocks', 'default')
+
+    # Parse fps_condition_blocks (e.g., "default", "deepest_third", "27-39", "[27,28,29]")
+    if fps_condition_blocks in ['default', 'deepest_third']:
+        # Default is deepest third for WAN (40 blocks total, blocks 27-39)
+        return list(range(27, 40))
+    elif isinstance(fps_condition_blocks, str) and '-' in fps_condition_blocks:
+        # Range format: "27-39"
+        start, end = map(int, fps_condition_blocks.split('-'))
+        return list(range(start, end + 1))
+    elif isinstance(fps_condition_blocks, list):
+        # Already a list
+        return fps_condition_blocks
+    else:
+        # Try to parse as JSON list string
+        import json
+        try:
+            return json.loads(fps_condition_blocks)
+        except:
+            logging.warning(f"Could not parse fps_condition_blocks: {fps_condition_blocks}, using default [27-39]")
+            return list(range(27, 40))
+
+def load_adapter_weights_selective(pipeline, checkpoint_path, fps_only=False, base_only=False, graft_mode=False, fps_block_indices=None):
     """Load adapter weights with selective parameter filtering using temporary files."""
-    if not fps_only and not base_only:
+    if not fps_only and not base_only and not graft_mode:
         # Normal mode - use original loading method
         logging.info(f"📦 NORMAL MODE: Loading all parameters")
         pipeline.load_adapter_weights(checkpoint_path)
@@ -168,11 +197,41 @@ def load_adapter_weights_selective(pipeline, checkpoint_path, fps_only=False, ba
         
     elif base_only:
         # Only keep base LoRA parameters (exclude FPS parameters)
-        filtered_checkpoint = {k: v for k, v in checkpoint.items() 
+        filtered_checkpoint = {k: v for k, v in checkpoint.items()
                              if 'fps_conditioning' not in k and 'fps_adapter' not in k}
         mode_name = "BASE-ONLY"
         logging.info(f"🎯 {mode_name} MODE: Filtered {len(filtered_checkpoint)} base LoRA parameters out of {len(checkpoint)} total")
-    
+
+    elif graft_mode:
+        # GRAFT MODE: Load FPS adapters + base LoRA only in FPS adapter blocks
+        if fps_block_indices is None:
+            raise ValueError("GRAFT mode requires fps_block_indices to be specified")
+
+        logging.info(f"🌿 GRAFT MODE: Loading FPS adapters + base LoRA only in blocks {fps_block_indices}")
+
+        filtered_checkpoint = {}
+        for k, v in checkpoint.items():
+            # Always include FPS conditioning (MLP)
+            if 'fps_conditioning' in k:
+                filtered_checkpoint[k] = v
+            # Always include FPS adapter parameters
+            elif 'fps_adapter' in k:
+                filtered_checkpoint[k] = v
+            # For base LoRA: only include if it's in one of the FPS blocks
+            else:
+                if '.blocks.' in k:
+                    try:
+                        # Parse: diffusion_model.blocks.27.cross_attn.k.lora_A.weight
+                        parts = k.split('.blocks.')[1].split('.')
+                        block_idx = int(parts[0])
+                        if block_idx in fps_block_indices:
+                            filtered_checkpoint[k] = v
+                    except (IndexError, ValueError):
+                        pass
+
+        mode_name = "GRAFT"
+        logging.info(f"🌿 GRAFT MODE: Filtered {len(filtered_checkpoint)} parameters (FPS + grafted base LoRA) out of {len(checkpoint)} total")
+
     # Show detailed breakdown of what's being loaded/skipped
     fps_conditioning_params = [k for k in checkpoint.keys() if 'fps_conditioning' in k]
     fps_adapter_params = [k for k in checkpoint.keys() if 'fps_adapter' in k]
@@ -198,14 +257,34 @@ def load_adapter_weights_selective(pipeline, checkpoint_path, fps_only=False, ba
             
     elif base_only:
         logging.info(f"🎯 BASE-ONLY filtering results:")
-        logging.info(f"  ✅ Loading base LoRA: {len(base_lora_params)} parameters") 
+        logging.info(f"  ✅ Loading base LoRA: {len(base_lora_params)} parameters")
         logging.info(f"  ❌ Skipping FPS conditioning: {len(fps_conditioning_params)} parameters")
         logging.info(f"  ❌ Skipping FPS adapters: {len(fps_adapter_params)} parameters")
-        
+
         # Show examples of base LoRA params
         if base_lora_params:
             logging.info(f"  📝 Example base LoRA params: {base_lora_params[:3]}")
-    
+
+    elif graft_mode:
+        # Count grafted base LoRA parameters
+        grafted_base_lora = [k for k in filtered_checkpoint.keys() if 'fps_conditioning' not in k and 'fps_adapter' not in k]
+        all_blocks_with_base_lora = set()
+        for param_name in grafted_base_lora:
+            if '.blocks.' in param_name:
+                parts = param_name.split('.blocks.')[1].split('.')
+                block_idx = int(parts[0])
+                all_blocks_with_base_lora.add(block_idx)
+
+        logging.info(f"🌿 GRAFT filtering results:")
+        logging.info(f"  ✅ Loading FPS conditioning: {len(fps_conditioning_params)} parameters")
+        logging.info(f"  ✅ Loading FPS adapters: {len(fps_adapter_params)} parameters")
+        logging.info(f"  ✅ Loading GRAFTED base LoRA (blocks {sorted(all_blocks_with_base_lora)}): {len(grafted_base_lora)} parameters")
+        logging.info(f"  ❌ Skipping base LoRA from other blocks: {len(base_lora_params) - len(grafted_base_lora)} parameters")
+
+        # Show examples
+        if grafted_base_lora:
+            logging.info(f"  📝 Example grafted base LoRA params: {grafted_base_lora[:3]}")
+
     # Create temporary directory and filtered safetensors file
     temp_dir = tempfile.mkdtemp(prefix=f"selective_loading_{mode_name.lower()}_")
     temp_checkpoint_file = Path(temp_dir) / "filtered_adapter.safetensors"
@@ -281,15 +360,15 @@ def verify_fps_config_applied(pipeline, config):
     reference_match = "✅" if actual_reference_fps == expected_reference_fps else "⚠️"
     logging.info(f"  Reference FPS check: Expected={expected_reference_fps}, Actual={actual_reference_fps} {reference_match}")
 
-def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfloat16, fps_only=False, base_only=False, config=None):
-    """Applies checkpoint weights (FPS-only or mixed LoRA+FPS)."""
+def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfloat16, fps_only=False, base_only=False, graft_mode=False, config=None):
+    """Applies checkpoint weights (FPS-only, base-only, GRAFT, or mixed LoRA+FPS)."""
     logging.info(f"Loading checkpoint: {checkpoint_path}")
-    
+
     checkpoint_type = detect_checkpoint_type(checkpoint_path)
     logging.info(f"Detected checkpoint type: {checkpoint_type}")
-    
-    # Verify FPS configuration for fps_only mode
-    if fps_only and config:
+
+    # Verify FPS configuration for fps_only or graft mode
+    if (fps_only or graft_mode) and config:
         verify_fps_config_applied(wan_t2v_pipeline, config)
     
     # Debug: Show FPS parameter values BEFORE loading checkpoint
@@ -333,7 +412,7 @@ def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfl
     
     # Configure base LoRA adapter based on selective loading mode
     configure_base_lora = False
-    
+
     if fps_only:
         logging.info("🎯 FPS-ONLY MODE: Skipping base LoRA configuration")
         logging.info("   ✅ FPS adapters were already configured from TOML during pipeline initialization")
@@ -342,20 +421,31 @@ def apply_checkpoint(wan_t2v_pipeline, checkpoint_path, rank=32, dtype=torch.bfl
     elif base_only:
         logging.info("🎯 BASE-ONLY MODE: Configuring only base LoRA adapter")
         configure_base_lora = True
+    elif graft_mode:
+        logging.info("🌿 GRAFT MODE: Configuring base LoRA adapter (will be loaded selectively)")
+        configure_base_lora = True
     else:
         # Normal mode - configure based on checkpoint type
         if checkpoint_type in ['lora_and_fps', 'unknown']:
             configure_base_lora = True
         elif checkpoint_type == 'fps_only':
             configure_base_lora = False
-    
+
     if configure_base_lora:
         adapter_config = {"type": "lora", "rank": rank, "alpha": rank, "dropout": 0.0, "dtype": dtype}
         wan_t2v_pipeline.configure_adapter(adapter_config)
         logging.info(f"Configured base LoRA adapter with rank {rank}")
-    
+
+    # Extract FPS block indices for GRAFT mode
+    fps_block_indices = None
+    if graft_mode:
+        if config is None:
+            raise ValueError("GRAFT mode requires config to determine FPS block indices")
+        fps_block_indices = get_fps_block_indices(config)
+        logging.info(f"🌿 GRAFT MODE: Extracted FPS block indices from config: {fps_block_indices}")
+
     # Load weights with selective parameter filtering
-    load_adapter_weights_selective(wan_t2v_pipeline, checkpoint_path, fps_only, base_only)
+    load_adapter_weights_selective(wan_t2v_pipeline, checkpoint_path, fps_only, base_only, graft_mode, fps_block_indices)
     
     # Debug: Show FPS parameter values AFTER loading checkpoint
     logging.info("✅ FPS parameter values AFTER checkpoint loading:")
@@ -983,13 +1073,15 @@ def main():
     parser.add_argument('--force_gate_one', action='store_true', help='🔧 DIAGNOSTIC: Force all FPS adapter gates to 1.0 for maximum FPS impact')
     parser.add_argument('--fps_only', action='store_true', help='Load only FPS-related parameters from checkpoint (ignore base LoRA)')
     parser.add_argument('--base_only', action='store_true', help='Load only base LoRA parameters from checkpoint (ignore FPS parameters)')
+    parser.add_argument('--graft', action='store_true', help='🌿 GRAFT MODE: Load base LoRA only in blocks where FPS adapters exist (spatial matching)')
     parser.add_argument('--align', action='store_true', help='Enable magnitude alignment for fps_only mode: scales y_fps by (||y_text||_clean / ||y_text||_with_lora) per block')
     
     args = parser.parse_args()
     
     # Validate selective loading arguments
-    if args.fps_only and args.base_only:
-        parser.error("--fps_only and --base_only are mutually exclusive. Choose one or neither.")
+    exclusive_modes = [args.fps_only, args.base_only, args.graft]
+    if sum(exclusive_modes) > 1:
+        parser.error("--fps_only, --base_only, and --graft are mutually exclusive. Choose one or none.")
 
     # Validate alignment requirements
     if args.align and not args.fps_only:
@@ -1002,7 +1094,7 @@ def main():
         logging.warning("   Alignment compensates for removing base LoRA during inference, not for absence of base LoRA in training.")
 
     # DEBUG: Print args to verify flags are set
-    print(f"DEBUG: args.fps_only={args.fps_only}, args.align={args.align}, args.base_only={args.base_only}")
+    print(f"DEBUG: args.fps_only={args.fps_only}, args.align={args.align}, args.base_only={args.base_only}, args.graft={args.graft}")
     
     try:
         # Setup
@@ -1023,6 +1115,12 @@ def main():
         elif args.base_only:
             validate_base_lora_config(config)
             logging.info("🎯 BASE-ONLY MODE: Will load only base LoRA parameters")
+        elif args.graft:
+            # GRAFT mode needs both FPS and base LoRA configs
+            validate_fps_config(config)
+            validate_base_lora_config(config)
+            fps_block_indices = get_fps_block_indices(config)
+            logging.info(f"🌿 GRAFT MODE: Will load FPS parameters + base LoRA only in blocks {fps_block_indices}")
 
         # Apply checkpoint
         # Special case: if both fps_only and align are set, load FULL checkpoint first
@@ -1033,11 +1131,12 @@ def main():
             # Load FULL checkpoint (base LoRA + FPS) for calibration
             logging.info("  Loading FULL checkpoint (base LoRA + FPS) for alignment calibration...")
             pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=base_rank,
-                                       fps_only=False, base_only=False, config=config)
+                                       fps_only=False, base_only=False, graft_mode=False, config=config)
         else:
             # Normal loading with selective filtering
             pipeline = apply_checkpoint(pipeline, args.checkpoint, rank=base_rank,
-                                       fps_only=args.fps_only, base_only=args.base_only, config=config)
+                                       fps_only=args.fps_only, base_only=args.base_only,
+                                       graft_mode=args.graft, config=config)
         
         # SUBTASK 2: Use TOML parameters for inference settings (with CLI overrides)
         # Extract inference parameters from TOML config or use defaults
