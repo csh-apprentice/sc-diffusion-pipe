@@ -273,3 +273,11 @@ XCLIP score: metric/xclip_score_calculator.py
 VQA score: https://github.com/linzhiqiu/t2v_metrics
 
 Put the metric/calculate_vqa_score.py under the /root/workspace/sc-diffusion-pipe/utils/t2v_metrics
+
+Vbench score: follow the vbench git repo : https://github.com/Vchitect/VBench
+
+python evaluate.py \
+    --dimension 'subject_consistency' 'background_consistency'  'motion_smoothness' 'dynamic_degree' 'aesthetic_quality' 'imaging_quality' \
+    --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/20251030_08-16-52_graft \
+    --mode=custom_input \
+    --output_path "./50_49/evaluation_20251030_08-16-52_graft/"
