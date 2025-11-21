@@ -153,6 +153,83 @@ To train the model on 2 GPU (A100E 80 GB):
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_SHUTTER_30S.toml' > ./output/fps_nohup_log/shutter_30S.out 2>&1 &
 
+## How to create the dataset:
+
+### Shutter
+
+shape_blur dataset comes from /root/workspace/sc-diffusion-pipe/utils/synthesis/generate_synthetic_blur_dataset_pallete_random.py, the videos are not fully align but still gives good result
+
+python generate_synthetic_blur_dataset_pallete_random.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_one_shot_150_8f/ \
+  --modes video \
+  --num_scales 9 \
+  --samples_per_scale 1 \
+  --num_frames 8 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_obj 1 \
+  --max_objs 3 \
+  --bg_white_prob 1.0 \
+  --caption_relations 
+
+
+
+To create the align video:
+python generate_synthetic_blur_dataset_pallete_align.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_100s4f \
+  --modes video \
+  --num_scales 100 \
+  --samples_per_scale 1 \
+  --num_frames 4 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_obj 1 \
+  --max_objs 3 \
+  --seed 42 \
+  --caption_relations 
+
+num_scales: how many condition for each scene
+samples_per_scale: how many scenes
+num_frames: How many frame in each video
+
+### APERTURE:
+Please refer to the google drive (blender script bokeh_dataset_box_1030.py) (dataset/creation_code)
+
+### TEMPERATURE:
+(USE ALL WHITE BACKGROUND)
+python generate_temp_by_scale.py \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/2dshapes_temp_part2/9s \
+  --num_scenes 3 \
+  --num_scales 9 \
+  --white-bg \
+  --k-lo 2000 --k-hi 20000 --k-ref 6500 --preserve-luminance
+
+
+adjust temperature fom existed:
+
+python apply_temp_shifts.py \
+  --input_image /root/workspace/sc-diffusion-pipe/dataset/mouflower_temp/6000/mouflower.jpg \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/mouflower_ablation \
+  --num_scales 7 \
+  --k-lo 2000 \
+  --k-hi 20000 \
+  --k-ref 6500 \
+  --preserve-luminance \
+  --seed 42
+
+Or even uniform space:
+python apply_temp_shifts.py \
+  --input_image /root/workspace/sc-diffusion-pipe/dataset/mouflower_temp/6000/mouflower.jpg \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/real_syn/temp/mouflower_ablation \
+  --num_scales 7 \
+  --k-lo 2000 \
+  --k-hi 20000 \
+  --k-ref 6500 \
+  --preserve-luminance \
+  --uniform
+
 ## How to inference
 We have four inference script now, may beed future merging:
 
