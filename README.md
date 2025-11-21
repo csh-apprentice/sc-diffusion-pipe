@@ -174,6 +174,22 @@ python generate_synthetic_blur_dataset_pallete_random.py \
   --caption_relations 
 
 
+(if you want a fixed fps list)
+python generate_synthetic_blur_dataset_fps.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_one_shot_slides/ \
+  --modes video \
+  --fps_list 12,24,30,40,60,120,240 \
+  --samples_per_fps 1 \
+  --num_frames 12 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_objs 1 \
+  --max_objs 1 \
+  --seed 40 \
+  --caption_relations 
+
+
 
 To create the align video:
 python generate_synthetic_blur_dataset_pallete_align.py \
@@ -229,6 +245,16 @@ python apply_temp_shifts.py \
   --k-ref 6500 \
   --preserve-luminance \
   --uniform
+
+## Exsited Dataset
+### Shutter: 
+For some reason, shapes_blur is sota, but we also have a fully align dataset shutter_30 scenes
+
+### APERTURE:
+3shapes_bokeh_30scenes_1030_3
+
+### Temperature:
+2dshapes_temp_part1 and 2dshapes_temp_part2
 
 ## How to inference
 We have four inference script now, may beed future merging:
