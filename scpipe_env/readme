@@ -1,0 +1,98 @@
+This directory contains multiple ways to export the diffusion-pipe Conda environment.
+Each method serves a different purpose depending on how portable or reproducible you want the environment to be.
+
+1. environment_portable.yml — Portable, Recommended
+
+Best for:
+
+Recreating the environment on different machines
+
+Unknown future OS/architectures
+
+Sharing the environment with collaborators
+
+CI systems / cloud servers
+
+What it contains:
+
+All package names and versions
+
+No build numbers or platform-specific details
+
+Why it's good:
+
+Highest compatibility: can usually recreate on Linux, macOS, or different hardware (x86/ARM).
+
+The most reliable export for long-term use.
+
+Command used:
+
+conda env export --name diffusion-pipe --no-builds > environment_portable.yml
+
+2. environment_exact.yml — Full Reproducibility
+
+Best for:
+
+Reproducing exactly the same environment
+
+Same OS, same CPU/GPU architecture
+
+Debugging, experiments, or paper reproducibility
+
+What it contains:
+
+All packages
+
+Exact versions
+
+Build numbers
+
+Channel metadata
+
+Platform-specific info (e.g., linux-64)
+
+Why it's good:
+
+Guarantees the environment is recreated bit-for-bit identical (as long as platform is the same).
+
+Why not always use it:
+
+Not portable — may fail on different OS (Linux → macOS, ARM → x86).
+
+Larger and more rigid.
+
+Command used:
+
+conda env export --name diffusion-pipe > environment_exact.yml
+
+3. packages.txt — Simple Package List
+
+Best for:
+
+Human-readable reference of installed packages
+
+Comparing environments
+
+Quick browsing
+
+What it contains:
+
+Package list in Conda’s --export format
+
+Similar to a requirements.txt but not directly a full environment spec
+
+Why it's good:
+
+Simple, lightweight snapshot
+
+Useful for diffing or debugging
+
+Limitations:
+
+Not enough to rebuild the environment reliably
+
+Missing channel + dependency resolution information
+
+Command used:
+
+conda list --name diffusion-pipe --export > packages.txt
