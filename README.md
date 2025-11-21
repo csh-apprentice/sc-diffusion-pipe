@@ -396,7 +396,11 @@ and /root/workspace/sc-diffusion-pipe/visualize/bar_plot
 ## How to analysis
 
 ### HYP1: 
+[run]
 bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_22-28-03/epoch1000/similar_matrix.log
+
+[plot]
+bash /root/workspace/sc-diffusion-pipe/bash/analyze_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251027_23-58-53/epoch1000 0.5
 
 code: inference/compute_backbone_similarity_matrix.py
 
