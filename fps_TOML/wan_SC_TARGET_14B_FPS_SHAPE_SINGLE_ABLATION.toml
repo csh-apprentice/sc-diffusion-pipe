@@ -75,7 +75,7 @@ timestep_sample_method = 'logit_normal'
 
 # ========== EXTREME FPS TESTING WITH RMSNORM ==========
 # SubTask 1: Stronger time embedding initialization (τ = 0.1)
-fps_tau_transform = "log1p"                        # NEW: configurable transform
+fps_tau_transform = "raw"                        # NEW: configurable transform
 fps_tau_scale = 1.0                        # NEW: configurable scale
 # SubTask 2: Configurable number of adapter tokens  
 fps_adapter_num_tokens = 4                       # Number of adapter tokens (was hardcoded to 5)

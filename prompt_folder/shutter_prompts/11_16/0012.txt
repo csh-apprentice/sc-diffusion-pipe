@@ -1,0 +1,1 @@
+A first-person drone view moving rapidly through a narrow mountain valley.

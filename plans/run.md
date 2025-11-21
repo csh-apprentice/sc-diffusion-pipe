@@ -4,7 +4,7 @@ conda activate diffusion-pipe
 
 
 
-bash /root/workspace/sc-diffusion-pipe/bash/run_principal_orthogonality.sh /root/workspace/sc-diffusion-pipe/output/principal_orthogonality/20251015_14-02-14/orthagnal_check.log
+bash /root/workspace/sc-diffusion-pipe/bash/run_principal_orthogonality.sh /root/workspace/sc-diffusion-pipe/output/principal_orthogonality/20251008_20-21-45/orthagnal_check.log
 
 bash /root/workspace/sc-diffusion-pipe/bash/run_backbone_drift.sh /root/workspace/sc-diffusion-pipe/output/backbone_drift/K16/20251014_06-32-03/backbone_drift.log
 
@@ -15,9 +15,25 @@ bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/w
 
 bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251107_00-49-00/epoch1000/similar_matrix.log
 
+
+bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_22-27-44/epoch1000/similar_matrix.log
+
+bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_22-28-03/epoch1000/similar_matrix.log
+
 bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix_2.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251107_00-51-16/epoch1000/similar_matrix.log
 
 bash /root/workspace/sc-diffusion-pipe/bash/analyze_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251027_23-58-53/epoch1000 0.5
+
+
+bash /root/workspace/sc-diffusion-pipe/bash/analyze_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_07-33-48/epoch1000 0.5
+
+bash /root/workspace/sc-diffusion-pipe/bash/analyze_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_07-34-10/epoch1000 0.5
+
+
+bash /root/workspace/sc-diffusion-pipe/bash/compare_similarity_matrices.sh \
+  /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_07-33-48/epoch1000  \
+  /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_07-34-10/epoch1000 \
+  0.5
 
 bash /root/workspace/sc-diffusion-pipe/bash/run_fps_condition_similarity.sh /root/workspace/sc-diffusion-pipe/output/fps_condition_similarity/20251024_22-29-25/epoch1000/fps_condition_similarity.log
 
@@ -52,6 +68,11 @@ nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_HORSE_ABLATION.toml' > ./output/fps_nohup_log/shutter_horse.out 2>&1 &
 
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_ABLATION.toml' > ./output/fps_nohup_log/shutter_shape.out 2>&1 &
+
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_ADAPTER_TRAIN.toml' > ./output/fps_nohup_log/shutter_adapter_only.out 2>&1 &
+
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_SHUTTER_30S.toml' > ./output/fps_nohup_log/shutter_30S.out 2>&1 &
 
@@ -76,7 +97,13 @@ nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_BOKEH_150_02.toml' > ./output/bokeh_nohup_log/bokeh_150_02.out 2>&1 &
 
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_HUMAN.toml' > ./output/bokeh_nohup_log/bokeh_human_new.out 2>&1 &
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_BOKEH_SHAPE_ABLATION.toml' > ./output/bokeh_nohup_log/bokeh_shape_ablation.out 2>&1 &
+
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_BOKEH_SHAPE_ADAPTER_TRAIN.toml' > ./output/bokeh_nohup_log/bokeh_shape_adapter_train.out 2>&1 &
+
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config /root/workspace/sc-diffusion-pipe/bokeh_TOML/wan_SC_TARGET_14B_BOKEH_HUMAN_ABLATION.toml' > ./output/bokeh_nohup_log/bokeh_human_ablation.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config MY_TOML/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_VID_BASEONLY.toml' > ./output/nohup_log/single_video_baseonly_6000.out 2>&1 &
 
@@ -105,6 +132,13 @@ nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_SHAPE_TEMP_REDBLUE2D.toml' > ./output/temp_nohup_log/redblue_deepthird2d.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_SHAPE_TEMP_REDBLUEWHITE.toml' > ./output/temp_nohup_log/redbluewhite_deepthird.out 2>&1 &
+
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_MF_TEMP_ABLATION.toml' > ./output/temp_nohup_log/temp_mf_ablation.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_SHAPE_TEMP_ABLATION.toml' > ./output/temp_nohup_log/temp_shape_ablation.out 2>&1 &
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config temp_TOML/wan_SC_TARGET_14B_SHAPE_TEMP_ADAPTER_TRAIN.toml' > ./output/temp_nohup_log/temp_adapter_only.out 2>&1 &
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config bokeh_TOML/wan_SC_TARGET_14B_MOUTAIN_FLOWER.toml' > ./output/bokeh_nohup_log/moutain_flower_08.out 2>&1 &
 
@@ -281,18 +315,40 @@ python generate_synthetic_blur_dataset_multi.py \
 
 
 python generate_synthetic_blur_dataset_fps.py \
-  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_one_shot_ablation/ \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_one_shot_slides/ \
   --modes video \
   --fps_list 12,24,30,40,60,120,240 \
   --samples_per_fps 1 \
-  --num_frames 8 \
+  --num_frames 12 \
   --align_img_video \
   --min_speed 1000 \
   --max_speed 1000 \
   --min_objs 1 \
   --max_objs 1 \
-  --seed 42 \
+  --seed 40 \
   --caption_relations 
+
+python apply_temp_shifts.py \
+  --input_image /root/workspace/sc-diffusion-pipe/dataset/mouflower_temp/6000/mouflower.jpg \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/real_syn/temp/mouflower_ablation \
+  --num_scales 7 \
+  --k-lo 2000 \
+  --k-hi 20000 \
+  --k-ref 6500 \
+  --preserve-luminance \
+  --uniform
+
+
+python apply_temp_shifts.py \
+  --input_image /root/workspace/sc-diffusion-pipe/utils/synthesis/crisp_shapes.png \
+  --output_dir /root/workspace/sc-diffusion-pipe/dataset/real_syn/temp/temp_ablation \
+  --num_scales 7 \
+  --k-lo 2000 \
+  --k-hi 20000 \
+  --k-ref 6500 \
+  --preserve-luminance \
+  --uniform
+  
 
 
 python generate_synthetic_blur_dataset_full_random.py \
@@ -349,6 +405,22 @@ python generate_synthetic_blur_dataset_final.py \
   --max_speed 1000 \
   --min_obj 1 \
   --max_objs 3 \
+  --caption_relations 
+
+
+
+python generate_synthetic_blur_dataset_pallete_align.py \
+  --out_dir /root/workspace/sc-diffusion-pipe/dataset/shutter_oneshot_slides \
+  --modes video \
+  --num_scales 20 \
+  --samples_per_scale 1 \
+  --num_frames 12 \
+  --align_img_video \
+  --min_speed 1000 \
+  --max_speed 1000 \
+  --min_obj 2 \
+  --max_objs 2 \
+  --seed 40 \
   --caption_relations 
   
 
@@ -524,4 +596,10 @@ python inference_flux.py \
     --num_grounding_steps 24
 
 
-python inference_bokehK.py --config configs/inference_genphoto/adv3_256_384_genphoto_relora_bokehK.yaml --base_scene "A young boy wearing an orange jacket is standing on a crosswalk, waiting to cross the street." --bokehK_list "[2.0, 24.0]"
+python inference_bokehK.py --config configs/inference_genphoto/adv3_256_384_genphoto_relora_bokehK.yaml --base_scene "A painting on an easel in a meadow of wildflowers, the camera focus on the foreground." --bokehK_list "[2.0, 5.0, 10.0, 15.0, 24.0]"
+
+
+python inference_color_temperature.py --config configs/inference_genphoto/adv3_256_384_genphoto_relora_color_temperature.yaml --base_scene "A bear swiping at a fish in a river." --color_temperature_list "[2000.0, 3000.0, 4000.0, 5000.0, 6000.0, 7000.0, 8000.0, 9000.0, 10000.0, 11000.0, 12000.0]"
+
+
+python inference_color_temperature_low.py --config configs/inference_genphoto/adv3_256_384_genphoto_relora_color_temperature.yaml --base_scene "A bear swiping at a fish in a river." --color_temperature_list "[5455.0, 5155.0, 5555.0, 6555.0, 7555.0]"

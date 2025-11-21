@@ -20,7 +20,8 @@ plt.rcParams.update({
 
 # Constants from your data
 BASELINE = 6.20
-STEPS_PER_EPOCH = 80
+# *** CORRECTION APPLIED HERE: Changed from 80 to 8 ***
+STEPS_PER_EPOCH = 8
 EPOCHS = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
 
 # Raw data
@@ -33,8 +34,8 @@ temp_real_raw = [10.57, 14.06, 17.56, 20.15, 22.54, 24.71, 25.76, 26.12, 27.35, 
 
 # --- 3. Prepare Data for Plotting ---
 
-# Calculate x-axis in "k steps" (e.g., 80k)
-# We divide by 1000 to make the x-axis labels cleaner (e.g., "80" instead of "80000")
+# Calculate x-axis in "k steps" (e.g., 0.8k, 1.6k, ..., 8.0k)
+# We divide by 1000 to keep the x-axis values in thousands of steps
 steps_k = [e * STEPS_PER_EPOCH / 1000 for e in EPOCHS]
 
 # Prepend the Step 0 (with SSFD = 0.0) to all data
@@ -76,18 +77,22 @@ ax.axhline(y=BASELINE, color='black', linestyle='dotted', label='Baseline (SSFD)
 ax.set_xlabel('Steps (k)')
 ax.set_ylabel('SSFD Score')
 
-# Set x-axis ticks to be explicit and clean
-ax.set_xticks([0, 20, 40, 60, 80])
-ax.set_xticklabels(['0', '20k', '40k', '60k', '80k'])
+# *** NEW X-AXIS TICKS AND LABELS FOR 0k to 8.0k range (8 steps per epoch) ***
+# Set x-axis ticks explicitly
+tick_values = np.linspace(0, 8, 5) # Generates [0.0, 2.0, 4.0, 6.0, 8.0]
+ax.set_xticks(tick_values)
+# Format labels to show one decimal place for clarity, e.g., '2.0', '4.0', etc.
+ax.set_xticklabels([f'{x:.1f}' for x in tick_values])
+# Set X-axis limit to the maximum calculated step value
+ax.set_xlim(left=0, right=8.0)
+# *******************************************************
 
 # Set y-axis limits to give a good view of the data
 # Start at 0, end just above the max value
 data_max = max(bokeh_real_raw)
 ax.set_ylim(bottom=0, top=data_max * 1.05) # e.g., 0 to ~60
 
-# Add a legend (moved to upper left)
-# ax.legend(loc='upper left') # Old call
-
+# Add a legend
 # --- New Legend Logic (Markers on plot, not in legend) ---
 # Get handles and labels
 handles, labels = ax.get_legend_handles_labels()

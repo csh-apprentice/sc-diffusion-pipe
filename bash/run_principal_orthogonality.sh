@@ -28,19 +28,19 @@ conda activate diffusion-pipe
 # CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20250930_05-53-32/epoch1000"
 # OUTPUT_DIR="output/principal_orthogonality/20250930_05-53-32"
 
-# CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251008_20-21-45/wan_SC_TARGET_14B_3SHAPES.toml"
-# CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251008_20-21-45/epoch1000"
-# OUTPUT_DIR="output/principal_orthogonality/20251008_20-21-45/"
+CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251008_20-21-45/wan_SC_TARGET_14B_3SHAPES.toml"
+CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251008_20-21-45/epoch1000"
+OUTPUT_DIR="output/principal_orthogonality/20251008_20-21-45/"
 
 # CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/wan_SC_TARGET_14B_FPS_SHAPE_BLUR.toml"
 # CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251014_06-32-03/epoch1000"
 # OUTPUT_DIR="output/principal_orthogonality/20251014_06-32-03"
 
-CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251015_14-02-14/wan_SC_TARGET_14B_SHAPES_RANDOM.toml"
-CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251015_14-02-14/epoch1000"
-OUTPUT_DIR="output/principal_orthogonality/20251015_14-02-14/"
+# CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251015_14-02-14/wan_SC_TARGET_14B_SHAPES_RANDOM.toml"
+# CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251015_14-02-14/epoch1000"
+# OUTPUT_DIR="output/principal_orthogonality/20251015_14-02-14/"
 
-BLOCKS="27 33 39"
+BLOCKS="27"
 NUM_COMPONENTS="64"
 FPS_CONDITION="1.0"
 LOG_FILE="${1:-}"  # Optional first argument for log file path

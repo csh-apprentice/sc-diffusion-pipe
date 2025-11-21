@@ -81,9 +81,34 @@ set -e
 # CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251027_03-23-30/epoch1000"
 # OUTPUT_DIR="output/similarity_matrix/20251027_03-23-30/epoch1000"
 
-CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251028_21-19-57/wan_SC_TARGET_14B_SHAPE_SOLID_MINI_PART12.toml"
-CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251028_21-19-57/epoch800"
-OUTPUT_DIR="output/similarity_matrix/20251028_21-19-57/epoch800"
+# CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251028_21-19-57/wan_SC_TARGET_14B_SHAPE_SOLID_MINI_PART12.toml"
+# CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251028_21-19-57/epoch800"
+# OUTPUT_DIR="output/similarity_matrix/20251028_21-19-57/epoch800"
+
+# CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_07-33-48/wan_SC_TARGET_14B_FPS_HORSE_ABLATION.toml"
+# CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_07-33-48/epoch1000"
+# OUTPUT_DIR="output/similarity_matrix/20251115_07-33-48/epoch1000"
+
+# CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_07-34-10/wan_SC_TARGET_14B_FPS_SHAPE_SINGLE_ABLATION.toml"
+# CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_07-34-10/epoch1000"
+# OUTPUT_DIR="output/similarity_matrix/20251115_07-34-10/epoch1000"
+
+# CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_08-01-31/wan_SC_TARGET_14B_MF_TEMP_ABLATION.toml"
+# CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_08-01-31/epoch1000"
+# OUTPUT_DIR="output/similarity_matrix/20251115_08-01-31/epoch1000"
+
+# CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_19-13-59/wan_SC_TARGET_14B_SHAPE_TEMP_ABLATION.toml"
+# CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_19-13-59/epoch1000"
+# OUTPUT_DIR="output/similarity_matrix/20251115_19-13-59/epoch1000"
+
+# CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_22-27-44/wan_SC_TARGET_14B_BOKEH_SHAPE_ABLATION.toml"
+# CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_22-27-44/epoch1000"
+# OUTPUT_DIR="output/similarity_matrix/20251115_22-27-44/epoch1000"
+
+CONFIG_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_22-28-03/wan_SC_TARGET_14B_BOKEH_HUMAN_ABLATION.toml"
+CHECKPOINT_PATH="/root/workspace/sc-diffusion-pipe/checkpoints/20251115_22-28-03/epoch1000"
+OUTPUT_DIR="output/similarity_matrix/20251115_22-28-03/epoch1000"
+
 
 
 

@@ -20,7 +20,8 @@ plt.rcParams.update({
 
 # Constants from your data
 BASELINE = 6.20
-STEPS_PER_EPOCH = 180 # Updated
+# *** CORRECTION APPLIED HERE: Changed from 180 to 18 ***
+STEPS_PER_EPOCH = 18
 EPOCHS = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
 
 # Raw data
@@ -34,9 +35,9 @@ temp_clean_raw = [1.32, 1.74, 2.08, 2.56, 3.10, 3.73, 3.85, 4.24, 4.21, 4.72]
 
 # --- 3. Prepare Data for Plotting ---
 
-# Calculate x-axis in "k steps" (e.g., 180k)
-# We divide by 1000 to make the x-axis labels cleaner
-steps_k = [e * STEPS_PER_EPOCH / 1000 for e in EPOCHS] # Now goes 18, 36, ..., 180
+# Calculate x-axis in "k steps" (e.g., 1.8k, 3.6k, ..., 18.0k)
+# We divide by 1000 to keep the x-axis values in thousands of steps
+steps_k = [e * STEPS_PER_EPOCH / 1000 for e in EPOCHS] 
 
 # Prepend the Step 0 (with SSFD = 0.0) to all data
 plot_steps = [0] + steps_k
@@ -78,9 +79,16 @@ ax.axhline(y=BASELINE, color='black', linestyle='dotted', label='Baseline (SSFD)
 ax.set_xlabel('Steps (k)')
 ax.set_ylabel('SSFD Score')
 
-# Set x-axis ticks to be explicit and clean for the new range
-ax.set_xticks([0, 36, 72, 108, 144, 180])
-ax.set_xticklabels(['0', '36k', '72k', '108k', '144k', '180k'])
+# *** NEW X-AXIS TICKS AND LABELS FOR 0k to 18.0k range ***
+# Set x-axis ticks explicitly
+tick_values = np.linspace(0, 18, 6) # [0.0, 3.6, 7.2, 10.8, 14.4, 18.0]
+ax.set_xticks(tick_values)
+# Format labels to show one decimal place for clarity, e.g., '3.6', '7.2', etc.
+ax.set_xticklabels([f'{x:.1f}' for x in tick_values])
+# Set X-axis limit to the maximum calculated step value
+ax.set_xlim(left=0, right=18.0)
+# *******************************************************
+
 
 # Set y-axis limits to give a good view of the data
 # Start at 0, end just above the max value
@@ -88,8 +96,6 @@ data_max = max(aperture_dirty_raw)
 ax.set_ylim(bottom=0, top=data_max * 1.05) # e.g., 0 to ~25
 
 # Add a legend
-# ax.legend(loc='upper left') # Old call
-
 # --- New Legend Logic (Markers on plot, not in legend) ---
 # Get handles and labels
 handles, labels = ax.get_legend_handles_labels()

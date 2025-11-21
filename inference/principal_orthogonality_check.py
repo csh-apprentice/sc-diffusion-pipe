@@ -314,47 +314,91 @@ def compute_singular_value_spectrum(X, Y):
 
 def plot_singular_value_spectrum(S_X_normalized, S_Y_normalized, block_idx, output_dir):
     """
-    Plot singular value spectrums for visual inspection.
-
-    Args:
-        S_X_normalized: Normalized singular values for X (y_text)
-        S_Y_normalized: Normalized singular values for Y (y_fps)
-        block_idx: Block index for labeling
-        output_dir: Directory to save plot
+    Plot singular value spectra with a clean aesthetic and point markers,
+    then save directly as a high-quality PDF.
     """
     try:
         import matplotlib
-        matplotlib.use('Agg')  # Non-interactive backend
+        matplotlib.use('Agg')  # non-interactive backend (safe for servers)
         import matplotlib.pyplot as plt
+        import numpy as np
+        import os
 
-        plt.figure(figsize=(10, 6))
+        # --- Style (clean scientific look) ---
+        plt.rcParams.update({
+            "figure.figsize": (9.5, 6.0),
+            "figure.dpi": 110,
+            "savefig.dpi": 300,
+            "axes.titlesize": 15,
+            "axes.labelsize": 13,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "legend.fontsize": 11,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "axes.grid": True,
+            "grid.linestyle": "--",
+            "grid.alpha": 0.35,
+        })
 
         # Convert to numpy for plotting
-        sv_x = S_X_normalized.cpu().numpy()
-        sv_y = S_Y_normalized.cpu().numpy()
+        sv_x = S_X_normalized.detach().cpu().numpy()
+        sv_y = S_Y_normalized.detach().cpu().numpy()
 
-        # Plot both spectrums
-        plt.plot(sv_x, 'b-', label='y_text (Principal Components)', linewidth=2)
-        plt.plot(sv_y, 'orange', label='y_fps (FPS Adapter)', linewidth=2)
+        eps = 1e-12
+        sv_x_plot = np.clip(sv_x, eps, None)
+        sv_y_plot = np.clip(sv_y, eps, None)
 
-        plt.xlabel('Singular Value Index', fontsize=12)
-        plt.ylabel('Normalized Singular Value', fontsize=12)
-        plt.title(f'Singular Value Spectrum Comparison - Block {block_idx}', fontsize=14)
-        plt.legend(fontsize=11)
-        plt.grid(True, alpha=0.3)
-        plt.yscale('log')
+        fig, ax = plt.subplots()
 
-        # Add annotation
-        plt.text(0.5, 0.02,
-                'Expected: y_text (blue) decays slowly (high-rank), y_fps (orange) decays sharply (low-rank)',
-                ha='center', transform=plt.gca().transAxes, fontsize=9, style='italic')
+        # --- Main plots ---
+        ax.plot(
+            sv_x_plot,
+            label='y_text (Principal Components)',
+            linewidth=2.2,
+            marker='o',
+            markersize=5.5,
+            markerfacecolor='white',
+            markeredgewidth=1.0,
+            alpha=0.95,
+        )
+        ax.plot(
+            sv_y_plot,
+            label='y_cond (Adapter)',
+            linewidth=2.2,
+            marker='s',
+            markersize=5.5,
+            markerfacecolor='white',
+            markeredgewidth=1.0,
+            alpha=0.95,
+        )
 
-        # Save plot
-        plot_path = os.path.join(output_dir, f'singular_value_spectrum_block{block_idx}.png')
-        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-        plt.close()
+        # Labels and title
+        ax.set_xlabel('Singular Value Index')
+        ax.set_ylabel('Normalized Singular Value')
+        ax.set_title(f'Singular Value Spectrum — Block {block_idx}')
 
-        logging.info(f"  Spectrum plot: {plot_path}")
+        # Log-scale on y-axis
+        ax.set_yscale('log')
+        ax.grid(True, which='major', linestyle='--', alpha=0.35)
+        ax.grid(True, which='minor', linestyle=':', alpha=0.22)
+
+        # Polish axes and spines
+        for spine in ['left', 'bottom']:
+            ax.spines[spine].set_linewidth(1.0)
+            ax.spines[spine].set_alpha(0.8)
+
+        ax.margins(x=0.02)
+        ax.legend(frameon=False, loc='best')
+
+        # Save to PDF
+        os.makedirs(output_dir, exist_ok=True)
+        pdf_path = os.path.join(output_dir, f'singular_value_spectrum_block{block_idx}.pdf')
+        plt.tight_layout()
+        plt.savefig(pdf_path, bbox_inches='tight', format='pdf')
+        plt.close(fig)
+
+        logging.info(f"  Spectrum plot (PDF): {pdf_path}")
 
     except ImportError:
         logging.warning("  matplotlib not available, skipping plot")

@@ -5,6 +5,10 @@ Applies color temperature shifts to an existing image based on sampled scales.
 Assumes the input image is at the reference temperature (K_ref).
 Maps scales s in [-1,1] to Kelvin using a perceptually-uniform Mired-based mapping.
 Outputs shifted images into scale-named subfolders.
+
+New:
+- --uniform: evenly spaced scales including both endpoints [-1, 1]
+             e.g., --uniform --num_scales 7 → [-1, -2/3, -1/3, 0, 1/3, 2/3, 1]
 """
 
 import os, math, argparse, random
@@ -22,13 +26,10 @@ def kelvin_to_rgb_fairchild(K: float) -> np.ndarray:
         R = 255.0
         G = max(0.0, 99.47 * math.log(temp) - 161.12)
         B = max(0.0, 138.52 * math.log(max(temp - 10.0, 1e-6)) - 305.04)
-    # Corrected Fairchild logic for temp > 66 (added missing range and fixed logic)
-    elif temp > 66.0: 
-        R = 329.70 * ((temp - 60.0) ** -0.1332) # Adjusted exponent slightly based on common sources
-        G = 288.12 * ((temp - 60.0) ** -0.0755) # Adjusted exponent slightly based on common sources
+    elif temp > 66.0:
+        R = 329.70 * ((temp - 60.0) ** -0.1332)
+        G = 288.12 * ((temp - 60.0) ** -0.0755)
         B = 255.0
-    # Note: The original script had a gap between 66 and 88, and complex logic > 88. 
-    # This simplified version is more standard for the >66K range.
     rgb = np.clip(np.array([R, G, B], dtype=np.float32), 0.0, 255.0) / 255.0
     return rgb
 
@@ -41,7 +42,7 @@ def apply_temperature_bgr(
     """
     Apply color-temperature shift to a BGR uint8 image (full-frame camera WB).
     """
-    if K == K_ref: # If target is same as reference, return original
+    if K == K_ref:  # If target is same as reference, return original
         return img_bgr.copy()
         
     g_ref = kelvin_to_rgb_fairchild(K_ref)
@@ -56,11 +57,8 @@ def apply_temperature_bgr(
 
     if preserve_luminance:
         # Keep average luminance roughly constant (Rec.709)
-        # Ensure input dimensions are compatible for broadcasting if needed
         Y_in  = 0.2126 * (img[..., 2]) + 0.7152 * (img[..., 1]) + 0.0722 * (img[..., 0])
         Y_out = 0.2126 * r           + 0.7152 * g           + 0.0722 * b
-        
-        # Calculate mean luminance safely, avoiding division by zero
         mean_Y_in = np.mean(Y_in)
         mean_Y_out = np.mean(Y_out)
         gain_y = (mean_Y_in + 1e-6) / (mean_Y_out + 1e-6)
@@ -69,7 +67,7 @@ def apply_temperature_bgr(
     out = np.clip(out, 0.0, 1.0)
     return (out * 255.0 + 0.5).astype(np.uint8)
 
-# ------------------ Condition Space + Mapping (Copied) ------------------
+# ------------------ Condition Space + Mapping (Copied + Uniform) ------------------
 
 def stratified_scales(n: int, rng: random.Random) -> List[float]:
     """Bin-uniform *random* sampling over [-1,1]: one random s per bin."""
@@ -83,6 +81,15 @@ def stratified_scales(n: int, rng: random.Random) -> List[float]:
         b = a + w
         xs.append(rng.uniform(a, b))
     return xs
+
+def uniform_scales(n: int) -> List[float]:
+    """
+    Evenly spaced samples including both endpoints [-1, 1].
+    Requires n >= 2 to include both -1 and +1.
+    """
+    if n < 2:
+        raise ValueError("--num_scales must be at least 2 when using --uniform (to include both endpoints).")
+    return [float(x) for x in np.linspace(-1.0, 1.0, num=n)]
 
 def map_scale_to_kelvin(s: float, k_lo: float, k_hi: float) -> float:
     """
@@ -101,7 +108,6 @@ def map_scale_to_kelvin(s: float, k_lo: float, k_hi: float) -> float:
 
     # Convert the resulting Mired value back to Kelvin
     kelvin = 1_000_000.0 / max(mired, 1e-10)
-    
     return float(kelvin)
 
 # ------------------ Main Logic ------------------
@@ -112,8 +118,10 @@ def main():
     ap.add_argument("--output_dir", type=str, required=True, help="Directory to save the shifted images.")
     
     # Scale and Kelvin parameters (same as before)
-    ap.add_argument("--num_scales", type=int, default=9, help="Number of stratified scale samples.")
-    ap.add_argument("--seed", type=int, default=None, help="Optional RNG seed for reproducible scales.")
+    ap.add_argument("--num_scales", type=int, default=9, help="Number of scale samples.")
+    ap.add_argument("--uniform", action="store_true",
+                    help="Evenly sample scales including both endpoints [-1, 1].")
+    ap.add_argument("--seed", type=int, default=None, help="Optional RNG seed for reproducible scales (non-uniform).")
     ap.add_argument("--k-lo", type=float, required=True, help="Minimum Kelvin value (maps to s=-1).")
     ap.add_argument("--k-hi", type=float, required=True, help="Maximum Kelvin value (maps to s=+1).")
     ap.add_argument("--k-ref", type=float, default=6500.0, help="Reference Kelvin of the input image.")
@@ -137,9 +145,22 @@ def main():
     print(f"Loaded input image: {args.input_image} (shape: {base_bgr.shape})")
 
     # --- Generate Scales ---
-    scales = stratified_scales(args.num_scales, rng=rng)
-    folder_names = [f"{s:.3f}" for s in scales]
+    if args.uniform:
+        scales = uniform_scales(args.num_scales)
+        sampling_desc = "uniform endpoints-included"
+    else:
+        scales = stratified_scales(args.num_scales, rng=rng)
+        sampling_desc = "stratified random"
+
+    # Pretty folder names; avoid "-0.000"
+    folder_names = []
+    for s in scales:
+        label = f"{s:.3f}"
+        if label == "-0.000":
+            label = "0.000"
+        folder_names.append(label)
     
+    print(f"[info] sampling: {sampling_desc}")
     print(f"[info] scales: {', '.join(folder_names)}")
     print(f"[info] mapping: s=-1 → {map_scale_to_kelvin(-1,args.k_lo,args.k_hi):.0f}K, "
           f"s=0 → {map_scale_to_kelvin(0,args.k_lo,args.k_hi):.0f}K, "
@@ -153,8 +174,9 @@ def main():
         K = map_scale_to_kelvin(s, args.k_lo, args.k_hi)
         
         # Apply the temperature shift
-        img_out = apply_temperature_bgr(base_bgr, K=float(K), K_ref=args.k_ref,
-                                        preserve_luminance=args.preserve_luminance)
+        img_out = apply_temperature_bgr(
+            base_bgr, K=float(K), K_ref=args.k_ref, preserve_luminance=args.preserve_luminance
+        )
 
         # Create output directory and save
         out_dir = os.path.join(args.output_dir, folder)
@@ -167,7 +189,7 @@ def main():
         if not ok:
             print(f"Warning: Failed to write output image to {img_path}")
         else:
-            print(f"Saved: {img_path} (K={K:.0f})")
+            print(f"Saved: {img_path} (s={s:.3f}, K={K:.0f})")
 
     print("Done.")
 

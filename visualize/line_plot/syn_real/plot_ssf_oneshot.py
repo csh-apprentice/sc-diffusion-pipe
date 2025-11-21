@@ -20,7 +20,7 @@ plt.rcParams.update({
 
 # Constants from your data
 BASELINE = 0.9530
-STEPS_PER_EPOCH = 80
+STEPS_PER_EPOCH = 8
 EPOCHS = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
 
 # Raw data
@@ -76,9 +76,15 @@ ax.axhline(y=BASELINE, color='black', linestyle='dotted', label='Baseline (SSF)'
 ax.set_xlabel('Steps (k)')
 ax.set_ylabel('SSF Score')
 
-# Set x-axis ticks to be explicit and clean
-ax.set_xticks([0, 20, 40, 60, 80])
-ax.set_xticklabels(['0', '20k', '40k', '60k', '80k'])
+# *** NEW X-AXIS TICKS AND LABELS FOR 0k to 8.0k range (8 steps per epoch) ***
+# Set x-axis ticks explicitly
+tick_values = np.linspace(0, 8, 5) # Generates [0.0, 2.0, 4.0, 6.0, 8.0]
+ax.set_xticks(tick_values)
+# Format labels to show one decimal place for clarity, e.g., '2.0', '4.0', etc.
+ax.set_xticklabels([f'{x:.1f}' for x in tick_values])
+# Set X-axis limit to the maximum calculated step value
+ax.set_xlim(left=0, right=8.0)
+# *******************************************************
 
 # Set y-axis limits to give a good view of the data
 # Find min and add some padding

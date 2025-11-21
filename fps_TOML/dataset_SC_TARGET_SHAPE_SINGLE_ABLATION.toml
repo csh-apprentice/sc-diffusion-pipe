@@ -18,7 +18,8 @@ frame_buckets = [1, 4, 8, 12]
 [[directory]]
 # Path to directory of images/videos, and corresponding caption files. The caption files should match the media file name, but with a .txt extension.
 # A missing caption file will log a warning, but then just train using an empty caption.
-path = "/root/workspace/sc-diffusion-pipe/dataset/shutter_one_shot_ablation/videos"
+path = "/root/workspace/sc-diffusion-pipe/dataset/real_syn/shutter/syn_shape/videos"
+# /root/workspace/sc-diffusion-pipe/dataset/real_syn/shutter/real_horse
 num_repeats = 10
 
 # [[directory]]
