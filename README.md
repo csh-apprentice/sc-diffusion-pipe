@@ -281,3 +281,8 @@ python evaluate.py \
     --videos_path /root/workspace/sc-diffusion-pipe/output/50_49/20251030_08-16-52_graft \
     --mode=custom_input \
     --output_path "./50_49/evaluation_20251030_08-16-52_graft/"
+
+### For results visualization:
+
+Refer to /root/workspace/sc-diffusion-pipe/visualize/line_plot
+and /root/workspace/sc-diffusion-pipe/visualize/bar_plot
