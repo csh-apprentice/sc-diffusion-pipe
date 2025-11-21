@@ -167,3 +167,63 @@ inference/test_fps_multiple_experiments_align_old.py (no graft mode)
 inference/test_fps_multiple_experiments_align.py (no clean mode)
 inference/test_fps_graft.py (no clean mode)
 inference/test_fps_batch_prompts.py: support a prompt file line by line (all mode support)
+
+## How to evaluate
+
+We mention FEP and SVP in the paper:
+### For FEP score:
+you should run the on th eoriginal backbone first:
+
+python test_fps_batch_prompts.py \
+    --config /root/workspace/sc-diffusion-pipe/checkpoints/20251008_20-21-45/wan_SC_TARGET_14B_3SHAPES.toml \
+    --checkpoint ../checkpoints/20251008_20-21-45/epoch1000 \
+    --fps_values 0.0 \
+    --steps 30 \
+    --frames 16 \
+    --output_dir ../output/16steps/clean_category_42 \
+    --prompt_dir ../utils/VBench/prompts/prompts_per_category  \
+    --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走." \
+    --seed 42 \
+    --port 29502 \
+    --width 512 \
+    --height 512 \
+    --clean \
+    > ../output/nohup_log/bokeh_clean_42_16frames.out 2>&1 
+
+Then change the seed to 99 to set the baseline for FEP score.
+
+
+
+To evaluete the changing for each model, run the following command this will generate FEP score for epcoh 100, 200, 300 ,... 1000 for Vbench 800 prompts in 8 subfolders.
+
+
+
+
+python test_fps_batch_prompts.py \
+    --config  /root/workspace/sc-diffusion-pipe/checkpoints/20251023_00-19-38/wan_SC_TARGET_14B_2DSHAPE_TEMP_30S.toml\
+    --checkpoint_parent ../checkpoints/20251023_00-19-38 \
+    --checkpoint_prefix epoch \
+    --checkpoint_start 100 \
+    --checkpoint_end 1000 \
+    --checkpoint_interval 100 \
+    --fps_values 0.0 \
+    --steps 1 \
+    --frames 4 \
+    --output_dir ../output/onestep/20251023_00-19-38 \
+    --prompt_dir ../utils/VBench/prompts/prompts_per_category  \
+    --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走." \
+    --seed 42 \
+    --port 29502 \
+    --width 512 \
+    --height 512 \
+    --base_only \
+    > ../output/nohup_log/shutter_20251023_00-19-38.out 2>&1 
+
+Then run: (see also bash/cal_score.sh)
+
+for epoch in 100 200 300 400 500 600 700 800 900 1000; do
+python metric/video_score_calculator_extended.py \
+    --orig_parent_dir output/onestep/clean_category_42 \
+    --adapt_parent_dir output/onestep/20251106_09-42-01/epoch${epoch} \
+    --output_file scores/20251106_09-42-01/epoch${epoch}/scores.json
+done
