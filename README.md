@@ -145,3 +145,25 @@ Three flags are relevant for caching. ```--cache_only``` does the caching flow, 
 
 ## Extra
 You can check out my [qlora-pipe](https://github.com/tdrussell/qlora-pipe) project, which is basically the same thing as this but for LLMs.
+
+
+
+## How to use scpipe
+To train the model on 2 GPU (A100E 80 GB):
+
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_SHUTTER_30S.toml' > ./output/fps_nohup_log/shutter_30S.out 2>&1 &
+
+## How to inference
+We have four inference script now, may beed future merging:
+
+CLEAN (Original Wan2.1 Backbone) 
+FPS_ONLY (Only apply the trained adapter)
+BASE_ONLY (Ony apply the trained backbone Lora)
+GRAFT (The clean inference method we mention in paper)
+No ARG: default, dirty inference method we mention in paper
+
+
+inference/test_fps_multiple_experiments_align_old.py (no graft mode)
+inference/test_fps_multiple_experiments_align.py (no clean mode)
+inference/test_fps_graft.py (no clean mode)
+inference/test_fps_batch_prompts.py: support a prompt file line by line (all mode support)
