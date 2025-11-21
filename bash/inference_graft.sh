@@ -1216,3 +1216,39 @@ python test_fps_multiple_experiments_align.py  \
     --height 512 \
     --graft \
     > ../output/nohup_log/bokeh_20251030_08-16-52_epoch1000_debug_graft_supp_neon.out 2>&1 
+
+
+python test_fps_multiple_experiments_align_old.py  \
+    --config /root/workspace/sc-diffusion-pipe/checkpoints/20251030_08-16-52/wan_SC_TARGET_14B_3SHAPES_30SCENE_1030_3.toml  \
+    --checkpoint ../checkpoints/20251030_08-16-52/epoch1000\
+    --fps_values -0.5 0.0 0.5 \
+    --steps 50 \
+    --frames 49 \
+    --output_dir /root/workspace/sc-diffusion-pipe/output/20251030_08-16-52_epoch1000_graft/0029 \
+    --prompt "A boat sailing from the horizon, growing in size as it nears the coastline." \
+    --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
+    --seed 42 \
+    --port 29502 \
+    --width 512 \
+    --height 512 \
+    --clean \
+    > ../output/nohup_log/bokeh_20251030_08-16-52_epoch1000_debug_graft_0029.out 2>&1 
+
+python test_fps_multiple_experiments_align_old.py  \
+    --config /root/workspace/sc-diffusion-pipe/checkpoints/20251030_08-16-52/wan_SC_TARGET_14B_3SHAPES_30SCENE_1030_3.toml  \
+    --checkpoint ../checkpoints/20251030_08-16-52/epoch1000\
+    --fps_values -0.5 0.5 \
+    --steps 50 \
+    --frames 49 \
+    --output_dir /root/workspace/sc-diffusion-pipe/output/20251030_08-16-52_epoch1000_graft_focus/0016 \
+    --prompt "A line of sunflowers in a field, stretching from close-up to the horizon, the camera focus on the foreground." \
+    --negative_prompt "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走" \
+    --seed 42 \
+    --port 29502 \
+    --width 512 \
+    --height 512 \
+    --clean \
+    > ../output/nohup_log/bokeh_20251030_08-16-52_epoch1000_debug_graft_0016.out 2>&1 
+
+
+
