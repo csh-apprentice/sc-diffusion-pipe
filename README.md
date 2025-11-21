@@ -286,3 +286,19 @@ python evaluate.py \
 
 Refer to /root/workspace/sc-diffusion-pipe/visualize/line_plot
 and /root/workspace/sc-diffusion-pipe/visualize/bar_plot
+
+
+## How to analysis
+
+### HYP1: 
+bash /root/workspace/sc-diffusion-pipe/bash/compute_similarity_matrix.sh /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_22-28-03/epoch1000/similar_matrix.log
+
+code: inference/compute_backbone_similarity_matrix.py
+
+## HYP2:
+/root/workspace/sc-diffusion-pipe/bash/run_principal_orthogonality.sh
+
+bash /root/workspace/sc-diffusion-pipe/bash/run_principal_orthogonality.sh /root/workspace/sc-diffusion-pipe/output/principal_orthogonality/20251008_20-21-45/orthagnal_check.log
+
+
+
