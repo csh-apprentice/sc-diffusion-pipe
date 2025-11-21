@@ -146,7 +146,9 @@ Three flags are relevant for caching. ```--cache_only``` does the caching flow, 
 ## Extra
 You can check out my [qlora-pipe](https://github.com/tdrussell/qlora-pipe) project, which is basically the same thing as this but for LLMs.
 
-
+## SCPIPE ENV:
+You can either follow the env guide from the main repo or try our snapshot:
+/root/workspace/sc-diffusion-pipe/scpipe_env
 
 ## How to use scpipe
 To train the model on 2 GPU (A100E 80 GB):
