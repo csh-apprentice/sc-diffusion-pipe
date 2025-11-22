@@ -19,3 +19,15 @@
 [submodule "submodules/OmniGen2"]
 	path = submodules/OmniGen2
 	url = https://github.com/VectorSpaceLab/OmniGen2
+[submodule "utils/BokehDiffusion"]
+	path = utils/BokehDiffusion
+	url = https://github.com/atfortes/BokehDiffusion.git
+[submodule "utils/VBench"]
+	path = utils/VBench
+	url = https://github.com/Vchitect/VBench.git
+[submodule "utils/generative-photography"]
+	path = utils/generative-photography
+	url = https://github.com/pandayuanyu/generative-photography.git
+[submodule "utils/t2v_metrics"]
+	path = utils/t2v_metrics
+	url = https://github.com/linzhiqiu/t2v_metrics.git
