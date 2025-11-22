@@ -151,6 +151,15 @@ You can either follow the env guide from the main repo or try our snapshot:
 /root/workspace/sc-diffusion-pipe/scpipe_env
 
 ## How to use scpipe
+git clone https://github.com/csh-apprentice/sc-diffusion-pipe.git
+cd sc-diffusion-pipe
+
+# switch to your branch
+git checkout sc-wan-conditioning
+
+# pull all submodules
+git submodule update --init --recursive
+
 To train the model on 2 GPU (A100E 80 GB):
 
 nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 deepspeed --num_gpus=2 train.py --deepspeed --config fps_TOML/wan_SC_TARGET_14B_SHUTTER_30S.toml' > ./output/fps_nohup_log/shutter_30S.out 2>&1 &
@@ -419,6 +428,11 @@ bash /root/workspace/sc-diffusion-pipe/bash/run_principal_orthogonality.sh /root
 
 
 
+git submodule add https://github.com/atfortes/BokehDiffusion.git            utils/BokehDiffusion
+
+git submodule add https://github.com/Vchitect/VBench.git                    utils/VBench
 
 
+git submodule add https://github.com/pandayuanyu/generative-photography.git  utils/generative-photography
 
+git submodule add https://github.com/linzhiqiu/t2v_metrics.git               utils/t2v_metrics
