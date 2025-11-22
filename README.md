@@ -436,3 +436,7 @@ git submodule add https://github.com/Vchitect/VBench.git                    util
 git submodule add https://github.com/pandayuanyu/generative-photography.git  utils/generative-photography
 
 git submodule add https://github.com/linzhiqiu/t2v_metrics.git               utils/t2v_metrics
+
+
+
+raw run.md: /root/workspace/sc-diffusion-pipe/plans/run.md
