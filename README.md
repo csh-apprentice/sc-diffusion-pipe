@@ -404,10 +404,21 @@ bash /root/workspace/sc-diffusion-pipe/bash/analyze_similarity_matrix.sh /root/w
 
 code: inference/compute_backbone_similarity_matrix.py
 
+To compare two model in one canvas:
+
+bash /root/workspace/sc-diffusion-pipe/bash/compare_similarity_matrices.sh \
+  /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_07-33-48/epoch1000  \
+  /root/workspace/sc-diffusion-pipe/output/similarity_matrix/20251115_07-34-10/epoch1000 \
+  0.5
+
+
 ## HYP2:
 /root/workspace/sc-diffusion-pipe/bash/run_principal_orthogonality.sh
 
 bash /root/workspace/sc-diffusion-pipe/bash/run_principal_orthogonality.sh /root/workspace/sc-diffusion-pipe/output/principal_orthogonality/20251008_20-21-45/orthagnal_check.log
+
+
+
 
 
 
